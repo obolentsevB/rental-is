@@ -7,6 +7,7 @@
 #   bash docs/scripts/create-issues.sh                      — створити тікети й milestones
 #   bash docs/scripts/create-issues.sh --project            — те саме + дошка «rental-is — план реалізації»
 #   bash docs/scripts/create-issues.sh --project="Назва"    — інша дошка
+#   bash docs/scripts/create-issues.sh --limit=5            — лише перші 5 тікетів CSV (тестовий запуск)
 #
 # Для --project токен gh має мати область project: gh auth refresh -s project
 # Повторний запуск безпечний: створені тікети записуються в docs/tickets-issues.csv
@@ -21,14 +22,20 @@ DEFAULT_PROJECT="rental-is — план реалізації"
 
 DRY=""
 PROJECT=""
+LIMIT=""
 for arg in "$@"; do
   case "$arg" in
     --dry-run)   DRY=1 ;;
     --project)   PROJECT="$DEFAULT_PROJECT" ;;
     --project=*) PROJECT="${arg#--project=}" ;;
+    --limit=*)   LIMIT="${arg#--limit=}" ;;
     *) echo "Невідомий аргумент: $arg" >&2; exit 2 ;;
   esac
 done
+if [[ -n "$LIMIT" && ! "$LIMIT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ПОМИЛКА: --limit очікує ціле число більше 0, отримано «$LIMIT»" >&2
+  exit 2
+fi
 
 # --- Milestones: назви, межі курсу, строки -----------------------------------
 declare -A MILESTONE=(
@@ -68,9 +75,10 @@ fi
 if [[ -n "$DRY" ]]; then
   echo "--- Milestones (старт $START, $HOURS_PER_WEEK год/тиждень)"
   for s in Е0 Е1 Е2 Е3 Е4 Е5 Е6; do
-    echo "$s: строк ${DUE[$s]} — ${MILESTONE[$s]} — $(milestone_desc "$s")"
+    echo "$s: строк ${DUE[$s]:-без дати} — ${MILESTONE[$s]} — $(milestone_desc "$s")"
   done
   [[ -n "$PROJECT" ]] && echo "--- Дошка: «$PROJECT»"
+  [[ -n "$LIMIT" ]] && echo "--- Обмеження: перші $LIMIT тікетів CSV"
   echo
 else
   # Дошка: перевірити заздалегідь, щоб не зупинитися посеред створення тікетів
@@ -96,17 +104,18 @@ else
   done
 
   # Milestones: відсутні створюються; у наявних із тією самою назвою
-  # оновлюються строк і опис (обидва визначає план)
+  # оновлюються строк і опис (обидва визначає план). Етап без рядків у CSV
+  # не має строку — milestone створюється без дати.
   existing_ms=$(gh api 'repos/{owner}/{repo}/milestones?state=all' --paginate \
                   -q '.[] | "\(.number);\(.title)"')
   for s in Е0 Е1 Е2 Е3 Е4 Е5 Е6; do
+    ms_args=(-f description="$(milestone_desc "$s")")
+    [[ -n "${DUE[$s]:-}" ]] && ms_args+=(-f due_on="${DUE[$s]}T12:00:00Z")
     num=$(awk -F';' -v t="${MILESTONE[$s]}" '$2 == t { print $1 }' <<<"$existing_ms")
     if [[ -n "$num" ]]; then
-      gh api -X PATCH "repos/{owner}/{repo}/milestones/$num" \
-        -f due_on="${DUE[$s]}T12:00:00Z" -f description="$(milestone_desc "$s")" > /dev/null
+      gh api -X PATCH "repos/{owner}/{repo}/milestones/$num" "${ms_args[@]}" > /dev/null
     else
-      gh api "repos/{owner}/{repo}/milestones" -f title="${MILESTONE[$s]}" \
-        -f due_on="${DUE[$s]}T12:00:00Z" -f description="$(milestone_desc "$s")" > /dev/null
+      gh api "repos/{owner}/{repo}/milestones" -f title="${MILESTONE[$s]}" "${ms_args[@]}" > /dev/null
     fi
   done
 fi
@@ -141,8 +150,16 @@ EOF
 }
 
 # --- Створення тікетів -------------------------------------------------------
-# Рядки docs/tickets.csv упорядковано так, що залежності йдуть раніше за тікет.
+# Рядки docs/tickets.csv упорядковано так, що залежності йдуть раніше за тікет,
+# тому перші N рядків (--limit) завжди мають усі свої залежності.
+row=0
 while IFS=';' read -r id stage type exec hours title reqs deps; do
+  row=$((row + 1))
+  if [[ -n "$LIMIT" ]] && (( row > LIMIT )); then
+    echo "Обмеження --limit=$LIMIT: решту тікетів пропущено"
+    break
+  fi
+
   if [[ -n "${ISSUE[$id]:-}" ]]; then
     if [[ -n "$PROJECT" && -z "$DRY" ]]; then
       gh issue edit "${ISSUE[$id]}" --add-project "$PROJECT" > /dev/null
