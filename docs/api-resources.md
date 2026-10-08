@@ -40,14 +40,14 @@ classDiagram
     class User { id; email; roles; status }
     class Listing { id; city; pricePerNight; maxGuests; status }
     class ClosedNight { date }
-    class Booking { id; checkIn; checkOut; guests; status }
+    class Booking { id; checkIn; checkOut; guestsCount; status }
     class Payment { id; type; amount }
     class Review { id; rating; text; visibility }
     class Complaint { id; status }
     class Dispute { id; status }
     class Appeal { id; subject; status }
     class Notification { id; text; createdAt }
-    class EventRecord { timestamp; level; type; correlationId }
+    class EventLogEntry { timestamp; level; type; correlationId }
     User "1" --> "*" Listing : власник
     User "1" --> "*" Booking : гість
     Listing "1" --> "*" ClosedNight
@@ -72,7 +72,7 @@ classDiagram
 | Скарга на відгук | — | `/reviews/{reviewId}/complaints`, `/complaints/{complaintId}` |
 | Спір щодо скасування | `Dispute` | `/bookings/{bookingId}/disputes`, `/disputes/{disputeId}` |
 | Оскарження | `Appeal` | `/appeals`, `/appeals/{appealId}` |
-| Запис журналу подій | — | `/events` |
+| Запис журналу подій | EventLogEntry | /events |
 | Повідомлення | `Notification` | `/notifications` |
 
 Терміни, яких слід уникати (глосарій, розділ 2), в іменах ресурсів і полів
@@ -201,3 +201,15 @@ classDiagram
 **Автентифікація.** Вхід (`POST /auth/session`) повертає токен; решта
 операцій, крім читання оголошень, відгуків і пошуку, вимагає заголовка
 `Authorization: Bearer <токен>`.
+
+## 6. Рішення, ухвалені під час формування контракту
+
+| Питання | Рішення | Підстава |
+|---|---|---|
+| Хто бачить зняте житло й приховані відгуки | Вхід у читанні житла й відгуків необов'язковий; з токеном власник бачить своє житло в будь-якому стані, модератор — будь-яке житло й приховані відгуки | AC-04.6, AC-18.4 |
+| Як модератор бачить історію бронювання у спорі | Через журнал подій з фільтрами `bookingId`, `listingId`; доступ до бронювань не розширюється | FR-12, FR-22 (K-87) |
+| Файли фотографій | Передаються в base64 у картці житла; віддаються статично за `Photo.url` поза контрактом REST | SRS §5.2 |
+| Простежуваність наслідків | Розширення `x-side-effects` перелічує FR, наслідки яких спричиняє операція | FR-14, FR-16 не мають власних операцій |
+| Межі кількості осіб, дат і фотографій | У схемах не обмежуються: порушення мають власні коди FR-07 і PHOTO_INVALID, а не VALIDATION_FAILED | FR-07 (порядок перевірок), FR-02 |
+| Ідентифікатори поза глосарієм | `token`, `reason`, `cancelledAt`, `reviewDeadline`, `accommodationAmount`, `commissionAmount`, `priceMin`, `priceMax`, `sort` та значення перелічень — ідентифікатори контракту | глосарій фіксує терміни предметної області |
+| Пагінація списків | Не вводиться у v1 | жодна вимога її не вимагає; застереження API-GATE |
