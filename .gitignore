@@ -17,3 +17,6 @@ Thumbs.db
 # тимчасові логи виконання
 *.tmp
 *.log
+
+!logs/api-*.log
+!logs/test-runs/*.log
