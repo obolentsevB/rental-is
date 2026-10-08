@@ -11,6 +11,10 @@ info:
 
     - `x-req-ids` — вимоги SRS із розділу 4 `docs/api-resources.md`.
     - `x-acceptance-criteria` — критерії прийняття цих вимог, які операція забезпечує.
+    - `x-side-effects` — вимоги SRS, наслідки яких операція спричиняє, хоча вони
+      не є її основною вимогою (запис журналу FR-22 — лише там, де він має
+      окремий AC). Критерії прийняття цих вимог, які операція забезпечує,
+      також входять до `x-acceptance-criteria`.
     - `x-roles` — хто може виконати операцію:
       `anonymous` — незареєстрований відвідувач;
       `guest` — обліковий запис, що діє як гість;
@@ -173,7 +177,8 @@ paths:
         самій дії.
       tags: [Users]
       x-req-ids: [FR-19]
-      x-acceptance-criteria: [AC-19.1, AC-19.2, AC-19.3, AC-19.4]
+      x-acceptance-criteria: [AC-04.2, AC-04.3, AC-13.7, AC-14.3, AC-15.8, AC-18.4, AC-19.1, AC-19.2, AC-19.3, AC-19.4, AC-23.1]
+      x-side-effects: [FR-04, FR-13, FR-14, FR-15, FR-18, FR-23]
       x-roles: [moderator]
       requestBody:
         required: true
@@ -251,7 +256,8 @@ paths:
       tags: [Auth]
       security: []
       x-req-ids: [FR-01, NFR-11]
-      x-acceptance-criteria: [AC-01.3, AC-01.7, AC-N11.2, AC-N11.3, AC-N11.4]
+      x-acceptance-criteria: [AC-01.3, AC-01.7, AC-22.3, AC-N11.2, AC-N11.3, AC-N11.4]
+      x-side-effects: [FR-22]
       x-roles: [anonymous]
       requestBody:
         required: true
@@ -453,7 +459,8 @@ paths:
         створюється.
       tags: [Listings]
       x-req-ids: [FR-02]
-      x-acceptance-criteria: [AC-02.1, AC-02.2, AC-02.3, AC-02.4, AC-02.6, AC-02.7]
+      x-acceptance-criteria: [AC-02.1, AC-02.2, AC-02.3, AC-02.4, AC-02.6, AC-02.7, AC-22.8]
+      x-side-effects: [FR-22]
       x-roles: [host]
       requestBody:
         required: true
@@ -507,11 +514,17 @@ paths:
     get:
       operationId: getListing
       summary: Картка житла
-      description: Доступна будь-кому, зокрема незареєстрованому відвідувачу.
+      description: |
+        Доступна будь-кому, зокрема незареєстрованому відвідувачу; вхід
+        необов'язковий. Без входу — лише житло в стані PUBLISHED. Власник із
+        входом бачить своє житло в будь-якому стані; модератор бачить будь-яке
+        житло (AC-04.6, AC-18.4).
       tags: [Listings]
-      security: []
+      security:
+        - {}
+        - bearerAuth: []
       x-req-ids: [FR-02]
-      x-acceptance-criteria: [AC-02.3]
+      x-acceptance-criteria: [AC-02.3, AC-04.6, AC-18.4]
       x-roles: [anonymous, guest, host, moderator]
       responses:
         '200':
@@ -538,7 +551,8 @@ paths:
         змінюється.
       tags: [Listings]
       x-req-ids: [FR-02]
-      x-acceptance-criteria: [AC-02.1, AC-02.2, AC-02.3, AC-02.5, AC-02.6, AC-02.7]
+      x-acceptance-criteria: [AC-02.1, AC-02.2, AC-02.3, AC-02.5, AC-02.6, AC-02.7, AC-22.8]
+      x-side-effects: [FR-22]
       x-roles: [host]
       requestBody:
         required: true
@@ -633,7 +647,8 @@ paths:
         власник отримує повідомлення.
       tags: [Listings]
       x-req-ids: [FR-04]
-      x-acceptance-criteria: [AC-04.1, AC-04.2, AC-04.3, AC-04.5]
+      x-acceptance-criteria: [AC-04.1, AC-04.2, AC-04.3, AC-04.5, AC-15.8, AC-23.1]
+      x-side-effects: [FR-15, FR-23]
       x-roles: [moderator]
       requestBody:
         required: true
@@ -839,7 +854,8 @@ paths:
         підтверджені бронювання закриття не впливає.
       tags: [Availability]
       x-req-ids: [FR-03]
-      x-acceptance-criteria: [AC-03.1, AC-03.2, AC-03.3]
+      x-acceptance-criteria: [AC-03.1, AC-03.2, AC-03.3, AC-15.8, AC-23.1]
+      x-side-effects: [FR-15, FR-23]
       x-roles: [host]
       responses:
         '200':
@@ -925,13 +941,17 @@ paths:
       operationId: listListingReviews
       summary: Відгуки про житло
       description: |
-        Неприховані відгуки про житло в стані Published. Для житла в стані
-        Unpublished список порожній: відгуки не показуються разом із ним, але
-        прихованими не стають (FR-04).
+        Вхід необов'язковий. Без входу — лише неприховані відгуки про житло в
+        стані PUBLISHED; для житла в стані Unpublished список порожній: відгуки
+        не показуються разом із ним, але прихованими не стають (FR-04).
+        Власник із входом бачить своє житло в будь-якому стані; модератор
+        бачить будь-яке житло і приховані відгуки (AC-04.6, AC-18.4).
       tags: [Reviews]
-      security: []
+      security:
+        - {}
+        - bearerAuth: []
       x-req-ids: [FR-18]
-      x-acceptance-criteria: [AC-18.2, AC-18.4, AC-18.5, AC-18.6]
+      x-acceptance-criteria: [AC-04.6, AC-18.2, AC-18.4, AC-18.5, AC-18.6]
       x-roles: [anonymous, guest, host, moderator]
       responses:
         '200':
@@ -976,7 +996,8 @@ paths:
         дат: ці порушення мають власні коди, а не VALIDATION_FAILED.
       tags: [Bookings]
       x-req-ids: [FR-06, FR-07, FR-08, FR-15]
-      x-acceptance-criteria: [AC-06.1, AC-06.2, AC-06.3, AC-06.4, AC-06.5, AC-06.6, AC-06.7, AC-07.1, AC-07.2, AC-07.3, AC-07.4, AC-08.1, AC-08.2, AC-08.3, AC-08.4, AC-08.5, AC-08.6, AC-08.7, AC-08.8, AC-08.9, AC-15.1]
+      x-acceptance-criteria: [AC-06.1, AC-06.2, AC-06.3, AC-06.4, AC-06.5, AC-06.6, AC-06.7, AC-07.1, AC-07.2, AC-07.3, AC-07.4, AC-08.1, AC-08.2, AC-08.3, AC-08.4, AC-08.5, AC-08.6, AC-08.7, AC-08.8, AC-08.9, AC-15.1, AC-22.4]
+      x-side-effects: [FR-22]
       x-roles: [guest]
       requestBody:
         required: true
@@ -1155,6 +1176,7 @@ paths:
                       decisionDeadline: '2027-06-02T10:00:00+03:00'
                       cancelledBy: null
                       cancelledAt: null
+                      reviewDeadline: null
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -1231,7 +1253,8 @@ paths:
         бо їхні запити вже відхилено (NFR-01).
       tags: [Bookings]
       x-req-ids: [FR-09, NFR-01]
-      x-acceptance-criteria: [AC-09.1, AC-09.2, AC-09.4, AC-09.5, AC-09.6, AC-09.7, AC-N01.1, AC-N01.2, AC-N01.3]
+      x-acceptance-criteria: [AC-09.1, AC-09.2, AC-09.4, AC-09.5, AC-09.6, AC-09.7, AC-15.8, AC-22.1, AC-23.1, AC-N01.1, AC-N01.2, AC-N01.3]
+      x-side-effects: [FR-15, FR-22, FR-23]
       x-roles: [host]
       responses:
         '200':
@@ -1261,6 +1284,7 @@ paths:
                     decisionDeadline: '2027-06-02T10:00:00+03:00'
                     cancelledBy: null
                     cancelledAt: null
+                    reviewDeadline: null
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -1299,7 +1323,8 @@ paths:
         REJECTED з поверненням 100% передоплати; гість отримує повідомлення.
       tags: [Bookings]
       x-req-ids: [FR-09]
-      x-acceptance-criteria: [AC-09.3, AC-09.4, AC-09.6]
+      x-acceptance-criteria: [AC-09.3, AC-09.4, AC-09.6, AC-15.8, AC-23.1]
+      x-side-effects: [FR-15, FR-23]
       x-roles: [host]
       responses:
         '200':
@@ -1329,6 +1354,7 @@ paths:
                     decisionDeadline: '2027-06-02T10:00:00+03:00'
                     cancelledBy: null
                     cancelledAt: null
+                    reviewDeadline: null
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -1371,7 +1397,8 @@ paths:
         REJECTED, CANCELLED і COMPLETED скасування неможливе.
       tags: [Bookings]
       x-req-ids: [FR-13]
-      x-acceptance-criteria: [AC-13.1, AC-13.2, AC-13.3, AC-13.4, AC-13.5, AC-13.6]
+      x-acceptance-criteria: [AC-13.1, AC-13.2, AC-13.3, AC-13.4, AC-13.5, AC-13.6, AC-14.1, AC-14.2, AC-14.4, AC-15.2, AC-15.3, AC-15.4, AC-15.8, AC-15.9, AC-16.2, AC-16.3, AC-16.4, AC-16.5, AC-16.6, AC-23.1]
+      x-side-effects: [FR-14, FR-15, FR-16, FR-23]
       x-roles: [guest, host]
       responses:
         '200':
@@ -1401,6 +1428,7 @@ paths:
                     decisionDeadline: '2027-06-02T10:00:00+03:00'
                     cancelledBy: GUEST
                     cancelledAt: '2027-06-01T12:00:00+03:00'
+                    reviewDeadline: null
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -1667,7 +1695,8 @@ paths:
         скарга з'являється в переліку звернень.
       tags: [Complaints]
       x-req-ids: [FR-18]
-      x-acceptance-criteria: [AC-18.1, AC-18.7]
+      x-acceptance-criteria: [AC-18.1, AC-18.7, AC-22.7, AC-23.3]
+      x-side-effects: [FR-22, FR-23]
       x-roles: [host]
       responses:
         '201':
@@ -1762,7 +1791,8 @@ paths:
         повідомлення; рішення не оскаржується.
       tags: [Complaints]
       x-req-ids: [FR-18]
-      x-acceptance-criteria: [AC-18.2, AC-18.6, AC-18.7]
+      x-acceptance-criteria: [AC-18.2, AC-18.6, AC-18.7, AC-23.1]
+      x-side-effects: [FR-23]
       x-roles: [moderator]
       requestBody:
         required: true
@@ -1837,7 +1867,8 @@ paths:
         звернень.
       tags: [Disputes]
       x-req-ids: [FR-20]
-      x-acceptance-criteria: [AC-20.1, AC-20.2, AC-20.5]
+      x-acceptance-criteria: [AC-20.1, AC-20.2, AC-20.5, AC-22.7, AC-23.3]
+      x-side-effects: [FR-22, FR-23]
       x-roles: [guest]
       responses:
         '201':
@@ -1952,7 +1983,8 @@ paths:
         отримують повідомлення.
       tags: [Disputes]
       x-req-ids: [FR-20]
-      x-acceptance-criteria: [AC-20.3, AC-20.4, AC-20.5]
+      x-acceptance-criteria: [AC-15.5, AC-15.6, AC-16.5, AC-16.6, AC-20.3, AC-20.4, AC-20.5, AC-23.1]
+      x-side-effects: [FR-15, FR-16, FR-23]
       x-roles: [moderator]
       requestBody:
         required: true
@@ -2033,7 +2065,8 @@ paths:
         заблокував) отримують повідомлення.
       tags: [Appeals]
       x-req-ids: [FR-21]
-      x-acceptance-criteria: [AC-21.1, AC-21.5]
+      x-acceptance-criteria: [AC-21.1, AC-21.5, AC-22.7, AC-23.3]
+      x-side-effects: [FR-22, FR-23]
       x-roles: [blocked, host]
       requestBody:
         required: true
@@ -2165,7 +2198,8 @@ paths:
         Заявник отримує повідомлення.
       tags: [Appeals]
       x-req-ids: [FR-21]
-      x-acceptance-criteria: [AC-21.2, AC-21.3, AC-21.4, AC-21.5]
+      x-acceptance-criteria: [AC-04.4, AC-18.5, AC-21.2, AC-21.3, AC-21.4, AC-21.5, AC-23.1]
+      x-side-effects: [FR-04, FR-18, FR-23]
       x-roles: [moderator]
       requestBody:
         required: true
@@ -2245,6 +2279,21 @@ paths:
       x-req-ids: [FR-22, NFR-06]
       x-acceptance-criteria: [AC-22.1, AC-22.2, AC-22.3, AC-22.4, AC-22.5, AC-22.6, AC-22.7, AC-22.8, AC-N06.1]
       x-roles: [guest, host, moderator]
+      parameters:
+        - name: bookingId
+          in: query
+          description: |
+            Лише записи цього бронювання. Доступ за ролями не змінюється
+            (AC-22.5): фільтр звужує лише записи, доступні поточному користувачу.
+          schema:
+            $ref: '#/components/schemas/Id'
+        - name: listingId
+          in: query
+          description: |
+            Лише записи цього оголошення. Доступ за ролями не змінюється
+            (AC-22.5): фільтр звужує лише записи, доступні поточному користувачу.
+          schema:
+            $ref: '#/components/schemas/Id'
       responses:
         '200':
           description: Записи журналу подій, доступні поточному користувачу
@@ -2647,7 +2696,7 @@ components:
           description: Поза 1…maxGuests житла — GUESTS_OUT_OF_RANGE.
     Booking:
       type: object
-      required: [id, listingId, checkIn, checkOut, guestsCount, status, checkInTime, checkOutTime, turnoverNights, commissionRate, accommodationCost, commission, prepayment, checkInAt, checkOutAt, decisionDeadline, cancelledBy, cancelledAt]
+      required: [id, listingId, checkIn, checkOut, guestsCount, status, checkInTime, checkOutTime, turnoverNights, commissionRate, accommodationCost, commission, prepayment, checkInAt, checkOutAt, decisionDeadline, cancelledBy, cancelledAt, reviewDeadline]
       properties:
         id:
           allOf: [{ $ref: '#/components/schemas/Id' }]
@@ -2707,6 +2756,14 @@ components:
           format: date-time
           readOnly: true
           description: Момент скасування; від нього рахується строк подання спору (FR-20).
+        reviewDeadline:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+          description: |
+            Moment або null. Для бронювання в COMPLETED — checkOutAt + 14 днів:
+            до цього моменту доступна дія «залишити відгук» (AC-12.3, FR-17);
+            для інших статусів — null.
 
     Payment:
       type: object
@@ -3166,6 +3223,7 @@ components:
         decisionDeadline: '2027-06-02T10:00:00+03:00'
         cancelledBy: null
         cancelledAt: null
+        reviewDeadline: null
     ReviewVisible:
       value:
         id: 7cd0ad9f-c18e-4df5-8a9e-aebfc0d1e2f8
