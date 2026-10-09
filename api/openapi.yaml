@@ -1,0 +1,3256 @@
+openapi: 3.1.0
+info:
+  title: rental-is — внутрішній REST API
+  version: 1.0.0
+  description: |
+    Внутрішній програмний інтерфейс між клієнтом і сервером (SRS v1.1, §5.2).
+    Модель ресурсів, правила URI, перелік операцій і модель помилок —
+    `docs/api-resources.md`; терміни й ідентифікатори полів — `spec/glossary.md`.
+
+    **Розширення операцій**
+
+    - `x-req-ids` — вимоги SRS із розділу 4 `docs/api-resources.md`.
+    - `x-acceptance-criteria` — критерії прийняття цих вимог, які операція забезпечує.
+    - `x-side-effects` — вимоги SRS, наслідки яких операція спричиняє, хоча вони
+      не є її основною вимогою (запис журналу FR-22 — лише там, де він має
+      окремий AC). Критерії прийняття цих вимог, які операція забезпечує,
+      також входять до `x-acceptance-criteria`.
+    - `x-roles` — хто може виконати операцію:
+      `anonymous` — незареєстрований відвідувач;
+      `guest` — обліковий запис, що діє як гість;
+      `host` — обліковий запис, що діє як власник (власник конкретного
+      житла — той, хто його опублікував);
+      `moderator` — обліковий запис модератора;
+      `blocked` — заблокований користувач (FR-01: вхід, свої повідомлення
+      й поїздки, одне оскарження).
+
+    **Помилки.** Усі відповіді 4xx і 5xx — `application/problem+json` зі схемою
+    `Problem`. Перелік кодів закритий (`docs/api-resources.md`, розділ 5).
+    Для створення запиту на бронювання перевірки FR-07 виконуються в порядку
+    ACCOUNT_BLOCKED, MIN_NIGHTS, OWN_LISTING, GUESTS_OUT_OF_RANGE,
+    LISTING_UNPUBLISHED, CHECKIN_TOO_SOON, DATES_UNAVAILABLE; повертається
+    перший код, що спрацював, і HTTP-статус визначає саме він.
+
+    **Час і гроші.** Ночі — дати `YYYY-MM-DD`; моменти — дата й час зі зсувом
+    Europe/Kyiv; мітки часу журналу подій — UTC (NFR-07). Суми — UAH рядком
+    з двома знаками після крапки (NFR-09).
+servers:
+  - url: http://127.0.0.1:4010
+    description: Mock API (Prism)
+security:
+  - bearerAuth: []
+tags:
+  - name: Users
+    description: Облікові записи і блокування (FR-01, FR-19)
+  - name: Auth
+    description: Сесія входу (FR-01, NFR-11)
+  - name: Listings
+    description: Картка житла, пошук, зняття з публікації (FR-02, FR-04, FR-05)
+  - name: Availability
+    description: Ночі, закриті власником (FR-03)
+  - name: Bookings
+    description: Запити й бронювання (FR-06–FR-09, FR-12, FR-13)
+  - name: Payments
+    description: Платіжні операції (FR-15, FR-16)
+  - name: Reviews
+    description: Відгуки (FR-17, FR-18)
+  - name: Complaints
+    description: Скарги на відгуки (FR-18)
+  - name: Disputes
+    description: Спори щодо скасування власником (FR-20)
+  - name: Appeals
+    description: Оскарження (FR-21)
+  - name: Events
+    description: Журнал подій (FR-22, NFR-06)
+  - name: Notifications
+    description: Повідомлення (FR-23)
+
+paths:
+  /users:
+    post:
+      operationId: registerUser
+      summary: Реєстрація
+      description: |
+        Створює обліковий запис, який може діяти і як гість, і як власник.
+        Облікові записи модераторів через API не створюються (NFR-10).
+      tags: [Users]
+      security: []
+      x-req-ids: [FR-01]
+      x-acceptance-criteria: [AC-01.1, AC-01.2, AC-01.5, AC-01.6]
+      x-roles: [anonymous]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationRequest'
+            examples:
+              registration:
+                value:
+                  email: maria@example.com
+                  password: kyiv2027!
+      responses:
+        '201':
+          description: Обліковий запис створено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              examples:
+                registered:
+                  value:
+                    id: 2d8b5e4a-7c3f-4ea0-9b49-5f6a7b8c9da3
+                    email: maria@example.com
+                    roles: [GUEST, HOST]
+                    status: ACTIVE
+        '409':
+          description: Email уже використовується (AC-01.1)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                email-taken:
+                  value:
+                    type: urn:rental-is:problem:email-taken
+                    title: Email уже використовується
+                    status: 409
+                    code: EMAIL_TAKEN
+                    detail: Обліковий запис з email maria@example.com уже існує.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Запит порушує схему, зокрема пароль коротший за 8 символів (AC-01.2)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  value:
+                    type: urn:rental-is:problem:validation-failed
+                    title: Запит порушує схему
+                    status: 422
+                    code: VALIDATION_FAILED
+                    detail: 'password: щонайменше 8 символів, отримано 7.'
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me:
+    get:
+      operationId: getCurrentUser
+      summary: Власний обліковий запис
+      description: Доступна і заблокованому користувачу, щоб він бачив свій стан.
+      tags: [Users]
+      x-req-ids: [FR-01]
+      x-acceptance-criteria: [AC-01.5]
+      x-roles: [guest, host, moderator, blocked]
+      responses:
+        '200':
+          description: Обліковий запис поточного користувача
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              examples:
+                current-user:
+                  value:
+                    id: 2d8b5e4a-7c3f-4ea0-9b49-5f6a7b8c9da3
+                    email: maria@example.com
+                    roles: [GUEST, HOST]
+                    status: ACTIVE
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/{userId}/block:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+    post:
+      operationId: blockUser
+      summary: Блокування
+      description: |
+        Модератор безстроково блокує обліковий запис з обов'язковою підставою.
+        Наслідки FR-19 (приховування відгуків, зняття оголошень, відхилення
+        запитів, скасування з ініціатором PLATFORM) виконує система в тій
+        самій дії.
+      tags: [Users]
+      x-req-ids: [FR-19]
+      x-acceptance-criteria: [AC-04.2, AC-04.3, AC-13.7, AC-14.3, AC-15.8, AC-18.4, AC-19.1, AC-19.2, AC-19.3, AC-19.4, AC-23.1]
+      x-side-effects: [FR-04, FR-13, FR-14, FR-15, FR-18, FR-23]
+      x-roles: [moderator]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModerationReasonRequest'
+            examples:
+              block:
+                value:
+                  reason: Систематичні скасування підтверджених бронювань без пояснень.
+      responses:
+        '200':
+          description: Обліковий запис заблоковано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              examples:
+                blocked:
+                  value:
+                    id: 0b6f3c2e-5a1d-4c8e-9f27-3d4e5a6b7c81
+                    email: olena@example.com
+                    roles: [GUEST, HOST]
+                    status: BLOCKED
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Дія доступна лише модератору
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Обліковий запис уже заблоковано
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Обліковий запис уже заблоковано.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Немає підстави блокування (AC-19.1)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ReasonMissing'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/session:
+    post:
+      operationId: createSession
+      summary: Вхід
+      description: |
+        Вхід за email і паролем; повертає токен для заголовка
+        `Authorization: Bearer`. Заблокований користувач входить (FR-01).
+        Після 5 невдалих спроб поспіль вхід обмежено на 15 хв (NFR-11).
+        Пароль у відповідях не повертається ніколи.
+      tags: [Auth]
+      security: []
+      x-req-ids: [FR-01, NFR-11]
+      x-acceptance-criteria: [AC-01.3, AC-01.7, AC-22.3, AC-N11.2, AC-N11.3, AC-N11.4]
+      x-side-effects: [FR-22]
+      x-roles: [anonymous]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            examples:
+              login:
+                value:
+                  email: maria@example.com
+                  password: kyiv2027!
+      responses:
+        '201':
+          description: Сесію створено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              examples:
+                session:
+                  value:
+                    token: eyJhbGciOiJIUzI1NiJ9.c2Vzc2lvbg.dGVzdA
+        '401':
+          description: Неправильні email або пароль
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                invalid-credentials:
+                  value:
+                    type: urn:rental-is:problem:invalid-credentials
+                    title: Неправильні email або пароль
+                    status: 401
+                    code: INVALID_CREDENTIALS
+                    detail: Email або пароль неправильні.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Запит порушує схему
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  value:
+                    type: urn:rental-is:problem:validation-failed
+                    title: Запит порушує схему
+                    status: 422
+                    code: VALIDATION_FAILED
+                    detail: "email: обов'язкове поле."
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '429':
+          description: Тимчасове обмеження входу після 5 невдалих спроб (NFR-11)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                login-restricted:
+                  value:
+                    type: urn:rental-is:problem:login-restricted
+                    title: Вхід тимчасово обмежено
+                    status: 429
+                    code: LOGIN_RESTRICTED
+                    detail: Після 5 невдалих спроб вхід можливий через 15 хвилин від п'ятої спроби.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteSession
+      summary: Вихід
+      description: Завершує сесію, токен якої передано в заголовку.
+      tags: [Auth]
+      x-req-ids: [FR-01]
+      x-acceptance-criteria: []
+      x-roles: [guest, host, moderator, blocked]
+      responses:
+        '204':
+          description: Сесію завершено; тіла відповіді немає
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /listings:
+    get:
+      operationId: searchListings
+      summary: Пошук житла
+      description: |
+        Вибірка житла в стані Published. Усі фільтри необов'язкові й
+        поєднуються довільно. Місто — точний збіг без урахування регістру.
+        Діапазон дат задається парою `checkIn` і `checkOut` і відбирає житло,
+        що проходить повну перевірку доступності (FR-08) з технологічною
+        перервою, чинною на момент пошуку. Інших фільтрів немає.
+      tags: [Listings]
+      security: []
+      x-req-ids: [FR-05]
+      x-acceptance-criteria: [AC-05.1, AC-05.2, AC-05.3, AC-05.4, AC-05.5]
+      x-roles: [anonymous, guest, host, moderator]
+      parameters:
+        - name: city
+          in: query
+          schema:
+            type: string
+          example: Київ
+        - name: checkIn
+          in: query
+          description: Дата заїзду; задається разом із checkOut.
+          schema:
+            type: string
+            format: date
+          example: '2027-06-12'
+        - name: checkOut
+          in: query
+          description: Дата виїзду; задається разом із checkIn і пізніша за неї.
+          schema:
+            type: string
+            format: date
+          example: '2027-06-14'
+        - name: guestsCount
+          in: query
+          description: Кількість осіб; лишається житло, де вона не перевищує maxGuests.
+          schema:
+            type: integer
+            minimum: 1
+          example: 2
+        - name: priceMin
+          in: query
+          description: Нижня межа ціни за ніч, UAH.
+          schema:
+            $ref: '#/components/schemas/Money'
+        - name: priceMax
+          in: query
+          description: Верхня межа ціни за ніч, UAH.
+          schema:
+            $ref: '#/components/schemas/Money'
+        - name: sort
+          in: query
+          description: |
+            `price_asc`, `price_desc` — за ціною за ніч; `rating_desc` — за
+            неокругленою середньою оцінкою, житло без неприхованих відгуків у кінці.
+          schema:
+            type: string
+            enum: [price_asc, price_desc, rating_desc]
+      responses:
+        '200':
+          description: Житло, що відповідає фільтрам
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Listing'
+              examples:
+                search-results:
+                  value:
+                    - id: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                      title: Поділ
+                      description: Світла квартира біля Контрактової площі.
+                      city: Київ
+                      address: вул. Сагайдачного, 1
+                      maxGuests: 4
+                      pricePerNight: '1234.56'
+                      photos:
+                        - id: d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+                          url: http://127.0.0.1:4010/photos/d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+                      checkInTime: '14:00'
+                      checkOutTime: '11:00'
+                      turnoverNights: 0
+                      status: PUBLISHED
+                      averageRating: 4.5
+        '422':
+          description: Параметри порушують схему або checkIn не раніше checkOut
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  value:
+                    type: urn:rental-is:problem:validation-failed
+                    title: Запит порушує схему
+                    status: 422
+                    code: VALIDATION_FAILED
+                    detail: checkIn і checkOut задаються разом.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createListing
+      summary: Створення картки житла
+      description: |
+        Створює оголошення в стані Published. Відсутні checkInTime,
+        checkOutTime і turnoverNights отримують 14:00, 11:00 і 0.
+        Порушення вимог до фотографій (кількість, формат, розмір файлу) —
+        відмова PHOTO_INVALID із записом WARN у журналі подій; оголошення не
+        створюється.
+      tags: [Listings]
+      x-req-ids: [FR-02]
+      x-acceptance-criteria: [AC-02.1, AC-02.2, AC-02.3, AC-02.4, AC-02.6, AC-02.7, AC-22.8]
+      x-side-effects: [FR-22]
+      x-roles: [host]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+            examples:
+              podil:
+                $ref: '#/components/examples/ListingRequestPodil'
+      responses:
+        '201':
+          description: Оголошення створено в стані Published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+              examples:
+                created:
+                  $ref: '#/components/examples/ListingPodil'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або є модератором
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '422':
+          description: Картка порушує схему або вимоги до фотографій
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ListingValidationFailed'
+                photo-invalid:
+                  $ref: '#/components/examples/PhotoInvalid'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /listings/{listingId}:
+    parameters:
+      - $ref: '#/components/parameters/listingId'
+    get:
+      operationId: getListing
+      summary: Картка житла
+      description: |
+        Доступна будь-кому, зокрема незареєстрованому відвідувачу; вхід
+        необов'язковий. Без входу — лише житло в стані PUBLISHED. Власник із
+        входом бачить своє житло в будь-якому стані; модератор бачить будь-яке
+        житло (AC-04.6, AC-18.4).
+      tags: [Listings]
+      security:
+        - {}
+        - bearerAuth: []
+      x-req-ids: [FR-02]
+      x-acceptance-criteria: [AC-02.3, AC-04.6, AC-18.4]
+      x-roles: [anonymous, guest, host, moderator]
+      responses:
+        '200':
+          description: Картка житла
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+              examples:
+                podil:
+                  $ref: '#/components/examples/ListingPodil'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: replaceListing
+      summary: Редагування картки
+      description: |
+        Повна заміна картки житла її власником. Фотографії, які лишаються,
+        передаються посиланням на їхній `id`, нові — вмістом. Зміни не
+        впливають на значення, зафіксовані в уже створених запитах і
+        бронюваннях (FR-06). При відмові PHOTO_INVALID наявна картка не
+        змінюється.
+      tags: [Listings]
+      x-req-ids: [FR-02]
+      x-acceptance-criteria: [AC-02.1, AC-02.2, AC-02.3, AC-02.5, AC-02.6, AC-02.7, AC-22.8]
+      x-side-effects: [FR-22]
+      x-roles: [host]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+            examples:
+              podil-edit:
+                value:
+                  title: Поділ
+                  description: Світла квартира біля Контрактової площі.
+                  city: Київ
+                  address: вул. Сагайдачного, 1
+                  maxGuests: 4
+                  pricePerNight: '1234.56'
+                  photos:
+                    - id: d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+                  checkInTime: '16:00'
+                  checkOutTime: '10:00'
+                  turnoverNights: 1
+      responses:
+        '200':
+          description: Картку оновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+              examples:
+                updated:
+                  value:
+                    id: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                    title: Поділ
+                    description: Світла квартира біля Контрактової площі.
+                    city: Київ
+                    address: вул. Сагайдачного, 1
+                    maxGuests: 4
+                    pricePerNight: '1234.56'
+                    photos:
+                      - id: d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+                        url: http://127.0.0.1:4010/photos/d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+                    checkInTime: '16:00'
+                    checkOutTime: '10:00'
+                    turnoverNights: 1
+                    status: PUBLISHED
+                    averageRating: 4.5
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є власником житла (AC-02.5)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  value:
+                    type: urn:rental-is:problem:forbidden
+                    title: Дію не дозволено
+                    status: 403
+                    code: FORBIDDEN
+                    detail: Редагувати можна лише власне оголошення.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Картка порушує схему або вимоги до фотографій
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ListingValidationFailed'
+                photo-invalid:
+                  $ref: '#/components/examples/PhotoInvalid'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /listings/{listingId}/unpublish:
+    parameters:
+      - $ref: '#/components/parameters/listingId'
+    post:
+      operationId: unpublishListing
+      summary: Зняття з публікації
+      description: |
+        Модератор знімає опубліковане оголошення з обов'язковою підставою.
+        Запити в PENDING на це житло система переводить у REJECTED з
+        поверненням 100% передоплати; підтверджені бронювання зберігаються;
+        власник отримує повідомлення.
+      tags: [Listings]
+      x-req-ids: [FR-04]
+      x-acceptance-criteria: [AC-04.1, AC-04.2, AC-04.3, AC-04.5, AC-15.8, AC-23.1]
+      x-side-effects: [FR-15, FR-23]
+      x-roles: [moderator]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModerationReasonRequest'
+            examples:
+              unpublish:
+                value:
+                  reason: Фотографії не відповідають житлу.
+      responses:
+        '200':
+          description: Оголошення в стані Unpublished
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+              examples:
+                unpublished:
+                  value:
+                    id: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                    title: Поділ
+                    description: Світла квартира біля Контрактової площі.
+                    city: Київ
+                    address: вул. Сагайдачного, 1
+                    maxGuests: 4
+                    pricePerNight: '1234.56'
+                    photos:
+                      - id: d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+                        url: http://127.0.0.1:4010/photos/d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+                    checkInTime: '14:00'
+                    checkOutTime: '11:00'
+                    turnoverNights: 0
+                    status: UNPUBLISHED
+                    averageRating: 4.5
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Дія доступна лише модератору
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Оголошення вже в стані Unpublished
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Оголошення вже зняте з публікації.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Немає підстави зняття (AC-04.1)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ReasonMissing'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /listings/{listingId}/publish:
+    parameters:
+      - $ref: '#/components/parameters/listingId'
+    post:
+      operationId: publishListing
+      summary: Повернення в публікацію
+      description: |
+        Модератор повертає в публікацію оголошення, зняте модератором.
+        Оголошення, зняті за FR-14 або через блокування власника,
+        повертаються лише за задоволеним оскарженням (FR-21) — для них
+        операція отримує STATE_CONFLICT. Власник цієї дії не має (AC-04.6).
+      tags: [Listings]
+      x-req-ids: [FR-04]
+      x-acceptance-criteria: [AC-04.4, AC-04.6]
+      x-roles: [moderator]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModerationReasonRequest'
+            examples:
+              publish:
+                value:
+                  reason: Власник замінив фотографії.
+      responses:
+        '200':
+          description: Оголошення в стані Published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+              examples:
+                published:
+                  $ref: '#/components/examples/ListingPodil'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Дія доступна лише модератору (AC-04.6)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Оголошення опубліковане або зняте не модератором
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Оголошення, зняте за порогом скасувань, повертається лише за задоволеним оскарженням.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Немає підстави рішення
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ReasonMissing'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /listings/{listingId}/closed-nights:
+    parameters:
+      - $ref: '#/components/parameters/listingId'
+    get:
+      operationId: listClosedNights
+      summary: Закриті ночі
+      tags: [Availability]
+      x-req-ids: [FR-03]
+      x-acceptance-criteria: []
+      x-roles: [host]
+      responses:
+        '200':
+          description: Ночі, закриті власником
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClosedNight'
+              examples:
+                closed-nights:
+                  value:
+                    - date: '2027-06-20'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є власником житла
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/NotListingOwner'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /listings/{listingId}/closed-nights/{date}:
+    parameters:
+      - $ref: '#/components/parameters/listingId'
+      - $ref: '#/components/parameters/date'
+    put:
+      operationId: closeNight
+      summary: Закрити ніч
+      description: |
+        Ідемпотентно закриває ніч. Запити в PENDING, що містять цю ніч,
+        система переводить у REJECTED з поверненням 100% передоплати; на
+        підтверджені бронювання закриття не впливає.
+      tags: [Availability]
+      x-req-ids: [FR-03]
+      x-acceptance-criteria: [AC-03.1, AC-03.2, AC-03.3, AC-15.8, AC-23.1]
+      x-side-effects: [FR-15, FR-23]
+      x-roles: [host]
+      responses:
+        '200':
+          description: Ніч закрита
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClosedNight'
+              examples:
+                closed:
+                  value:
+                    date: '2027-06-20'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є власником житла
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/NotListingOwner'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Дата в шляху не у форматі YYYY-MM-DD
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/DateInvalid'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: openNight
+      summary: Відкрити ніч
+      description: |
+        Ідемпотентно відкриває ніч. Бронювання, уже відхилені через закриття,
+        лишаються в REJECTED.
+      tags: [Availability]
+      x-req-ids: [FR-03]
+      x-acceptance-criteria: [AC-03.4]
+      x-roles: [host]
+      responses:
+        '204':
+          description: Ніч відкрита; тіла відповіді немає
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є власником житла
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/NotListingOwner'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Дата в шляху не у форматі YYYY-MM-DD
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/DateInvalid'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /listings/{listingId}/reviews:
+    parameters:
+      - $ref: '#/components/parameters/listingId'
+    get:
+      operationId: listListingReviews
+      summary: Відгуки про житло
+      description: |
+        Вхід необов'язковий. Без входу — лише неприховані відгуки про житло в
+        стані PUBLISHED; для житла в стані Unpublished список порожній: відгуки
+        не показуються разом із ним, але прихованими не стають (FR-04).
+        Власник із входом бачить своє житло в будь-якому стані; модератор
+        бачить будь-яке житло і приховані відгуки (AC-04.6, AC-18.4).
+      tags: [Reviews]
+      security:
+        - {}
+        - bearerAuth: []
+      x-req-ids: [FR-18]
+      x-acceptance-criteria: [AC-04.6, AC-18.2, AC-18.4, AC-18.5, AC-18.6]
+      x-roles: [anonymous, guest, host, moderator]
+      responses:
+        '200':
+          description: Відгуки про житло
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Review'
+              examples:
+                reviews:
+                  value:
+                    - id: 7cd0ad9f-c18e-4df5-8a9e-aebfc0d1e2f8
+                      bookingId: 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+                      rating: 5
+                      text: Чисто, тихо, господиня на зв'язку.
+                      visibility: VISIBLE
+                      hiddenReason: null
+                      createdAt: '2027-06-14T18:00:00+03:00'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bookings:
+    post:
+      operationId: createBooking
+      summary: Створення запиту на бронювання
+      description: |
+        Створює бронювання в статусі PENDING, фіксує час заїзду, час виїзду,
+        технологічну перерву, відсоток комісії, вартість проживання й комісію
+        (FR-06, FR-15) і операцію оплати передоплати; власник отримує
+        повідомлення. Інші запити в PENDING на ті самі ночі створенню не
+        заважають.
+
+        Відмова не створює ні бронювання, ні платіжної операції й додає запис
+        WARN із кодом до журналу подій. Перевірки FR-07 виконуються в порядку
+        ACCOUNT_BLOCKED, MIN_NIGHTS, OWN_LISTING, GUESTS_OUT_OF_RANGE,
+        LISTING_UNPUBLISHED, CHECKIN_TOO_SOON, DATES_UNAVAILABLE; повертається
+        перший код, що спрацював. Тому схема не обмежує `guestsCount` і порядок
+        дат: ці порушення мають власні коди, а не VALIDATION_FAILED.
+      tags: [Bookings]
+      x-req-ids: [FR-06, FR-07, FR-08, FR-15]
+      x-acceptance-criteria: [AC-06.1, AC-06.2, AC-06.3, AC-06.4, AC-06.5, AC-06.6, AC-06.7, AC-07.1, AC-07.2, AC-07.3, AC-07.4, AC-08.1, AC-08.2, AC-08.3, AC-08.4, AC-08.5, AC-08.6, AC-08.7, AC-08.8, AC-08.9, AC-15.1, AC-22.4]
+      x-side-effects: [FR-22]
+      x-roles: [guest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingRequest'
+            examples:
+              checkin-on-previous-checkout:
+                summary: Заїзд у день виїзду попереднього гостя (AC-08.1)
+                value:
+                  listingId: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                  checkIn: '2027-06-12'
+                  checkOut: '2027-06-14'
+                  guestsCount: 2
+              shared-night:
+                summary: Спільна ніч із бронюванням B [2027-06-10, 2027-06-12) (AC-08.2)
+                value:
+                  listingId: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                  checkIn: '2027-06-11'
+                  checkOut: '2027-06-13'
+                  guestsCount: 2
+      responses:
+        '201':
+          description: Запит створено в статусі PENDING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+              examples:
+                checkin-on-previous-checkout:
+                  $ref: '#/components/examples/BookingPending'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований, бронює власне житло або є модератором
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                own-listing:
+                  value:
+                    type: urn:rental-is:problem:own-listing
+                    title: Власне житло
+                    status: 403
+                    code: OWN_LISTING
+                    detail: Не можна бронювати житло, власником якого ви є.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+                forbidden:
+                  value:
+                    type: urn:rental-is:problem:forbidden
+                    title: Дію не дозволено
+                    status: 403
+                    code: FORBIDDEN
+                    detail: Модератор не створює запитів на бронювання.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Житло зняте з публікації або діапазон недоступний
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                listing-unpublished:
+                  value:
+                    type: urn:rental-is:problem:listing-unpublished
+                    title: Житло зняте з публікації
+                    status: 409
+                    code: LISTING_UNPUBLISHED
+                    detail: Житло в стані Unpublished не приймає нових запитів.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+                dates-unavailable:
+                  summary: Спільна ніч 2027-06-11 із бронюванням B (AC-08.2)
+                  value:
+                    type: urn:rental-is:problem:dates-unavailable
+                    title: Дати недоступні
+                    status: 409
+                    code: DATES_UNAVAILABLE
+                    detail: Діапазон [2027-06-11, 2027-06-13) не проходить повну перевірку доступності — перетин ночей.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+                    conflictingBookingIds:
+                      - 5abe8b7d-af6c-4bd3-8e7c-8c9daebfc0d6
+        '422':
+          description: Запит неприйнятний — підстави FR-07 або порушення схеми
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  value:
+                    type: urn:rental-is:problem:validation-failed
+                    title: Запит порушує схему
+                    status: 422
+                    code: VALIDATION_FAILED
+                    detail: 'checkOut: очікується дата YYYY-MM-DD.'
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+                min-nights:
+                  value:
+                    type: urn:rental-is:problem:min-nights
+                    title: Менше 1 ночі
+                    status: 422
+                    code: MIN_NIGHTS
+                    detail: Діапазон [2027-06-12, 2027-06-12) містить 0 ночей.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+                guests-out-of-range:
+                  value:
+                    type: urn:rental-is:problem:guests-out-of-range
+                    title: Кількість осіб поза межами
+                    status: 422
+                    code: GUESTS_OUT_OF_RANGE
+                    detail: Кількість осіб 5 поза межами 1–4.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+                checkin-too-soon:
+                  value:
+                    type: urn:rental-is:problem:checkin-too-soon
+                    title: Замало часу до заїзду
+                    status: 422
+                    code: CHECKIN_TOO_SOON
+                    detail: До моменту заїзду 2027-06-12T14:00:00+03:00 лишається менше 1 години.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: listBookings
+      summary: Мої поїздки / бронювання власника
+      description: |
+        `role=guest` — бронювання поточного користувача як гостя («мої
+        поїздки»); клієнт групує їх на майбутні й минулі за `checkOutAt`.
+        `role=owner` — запити й бронювання житла, власником якого є поточний
+        користувач. Чужі бронювання не повертаються. Заблокований користувач
+        бачить лише свої поїздки (`role=guest`).
+      tags: [Bookings]
+      x-req-ids: [FR-12]
+      x-acceptance-criteria: [AC-12.1, AC-12.2, AC-12.3, AC-12.4, AC-12.5]
+      x-roles: [guest, host, blocked]
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [guest, owner]
+      responses:
+        '200':
+          description: Бронювання
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Booking'
+              examples:
+                trips:
+                  value:
+                    - id: 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+                      listingId: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                      checkIn: '2027-06-12'
+                      checkOut: '2027-06-14'
+                      guestsCount: 2
+                      status: PENDING
+                      checkInTime: '14:00'
+                      checkOutTime: '11:00'
+                      turnoverNights: 0
+                      commissionRate: 10
+                      accommodationCost: '2469.12'
+                      commission: '246.91'
+                      prepayment: '2716.03'
+                      checkInAt: '2027-06-12T14:00:00+03:00'
+                      checkOutAt: '2027-06-14T11:00:00+03:00'
+                      decisionDeadline: '2027-06-02T10:00:00+03:00'
+                      cancelledBy: null
+                      cancelledAt: null
+                      reviewDeadline: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Заблокований користувач запитує role=owner або запит робить модератор
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '422':
+          description: Немає параметра role або він має інше значення
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  value:
+                    type: urn:rental-is:problem:validation-failed
+                    title: Запит порушує схему
+                    status: 422
+                    code: VALIDATION_FAILED
+                    detail: "role: обов'язковий параметр, guest або owner."
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bookings/{bookingId}:
+    parameters:
+      - $ref: '#/components/parameters/bookingId'
+    get:
+      operationId: getBooking
+      summary: Деталі бронювання
+      description: |
+        Доступні гостю бронювання і власнику житла; для інших користувачів
+        бронювання не існує (NOT_FOUND).
+      tags: [Bookings]
+      x-req-ids: [FR-12]
+      x-acceptance-criteria: [AC-12.5]
+      x-roles: [guest, host, blocked]
+      responses:
+        '200':
+          description: Бронювання
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+              examples:
+                pending:
+                  $ref: '#/components/examples/BookingPending'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bookings/{bookingId}/confirm:
+    parameters:
+      - $ref: '#/components/parameters/bookingId'
+    post:
+      operationId: confirmBooking
+      summary: Підтвердження
+      description: |
+        Власник житла до спливу строку рішення переводить запит із PENDING у
+        CONFIRMED. У тій самій дії система переводить у REJECTED усі інші
+        запити в PENDING на це житло, несумісні з підтвердженим за умовою (2)
+        FR-08, з поверненням 100% передоплати. Із одночасних підтверджень
+        несумісних запитів успішне лише одне; решта отримує STATE_CONFLICT,
+        бо їхні запити вже відхилено (NFR-01).
+      tags: [Bookings]
+      x-req-ids: [FR-09, NFR-01]
+      x-acceptance-criteria: [AC-09.1, AC-09.2, AC-09.4, AC-09.5, AC-09.6, AC-09.7, AC-15.8, AC-22.1, AC-23.1, AC-N01.1, AC-N01.2, AC-N01.3]
+      x-side-effects: [FR-15, FR-22, FR-23]
+      x-roles: [host]
+      responses:
+        '200':
+          description: Бронювання в статусі CONFIRMED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+              examples:
+                confirmed:
+                  value:
+                    id: 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+                    listingId: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                    checkIn: '2027-06-12'
+                    checkOut: '2027-06-14'
+                    guestsCount: 2
+                    status: CONFIRMED
+                    checkInTime: '14:00'
+                    checkOutTime: '11:00'
+                    turnoverNights: 0
+                    commissionRate: 10
+                    accommodationCost: '2469.12'
+                    commission: '246.91'
+                    prepayment: '2716.03'
+                    checkInAt: '2027-06-12T14:00:00+03:00'
+                    checkOutAt: '2027-06-14T11:00:00+03:00'
+                    decisionDeadline: '2027-06-02T10:00:00+03:00'
+                    cancelledBy: null
+                    cancelledAt: null
+                    reviewDeadline: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є власником житла (AC-09.4)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/NotListingOwner'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Бронювання вже не в PENDING або строк рішення сплив (AC-09.5, AC-10.3)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  $ref: '#/components/examples/NotPending'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bookings/{bookingId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/bookingId'
+    post:
+      operationId: rejectBooking
+      summary: Відхилення
+      description: |
+        Власник житла до спливу строку рішення переводить запит із PENDING у
+        REJECTED з поверненням 100% передоплати; гість отримує повідомлення.
+      tags: [Bookings]
+      x-req-ids: [FR-09]
+      x-acceptance-criteria: [AC-09.3, AC-09.4, AC-09.6, AC-15.8, AC-23.1]
+      x-side-effects: [FR-15, FR-23]
+      x-roles: [host]
+      responses:
+        '200':
+          description: Бронювання в статусі REJECTED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+              examples:
+                rejected:
+                  value:
+                    id: 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+                    listingId: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                    checkIn: '2027-06-12'
+                    checkOut: '2027-06-14'
+                    guestsCount: 2
+                    status: REJECTED
+                    checkInTime: '14:00'
+                    checkOutTime: '11:00'
+                    turnoverNights: 0
+                    commissionRate: 10
+                    accommodationCost: '2469.12'
+                    commission: '246.91'
+                    prepayment: '2716.03'
+                    checkInAt: '2027-06-12T14:00:00+03:00'
+                    checkOutAt: '2027-06-14T11:00:00+03:00'
+                    decisionDeadline: '2027-06-02T10:00:00+03:00'
+                    cancelledBy: null
+                    cancelledAt: null
+                    reviewDeadline: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є власником житла (AC-09.4)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/NotListingOwner'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Бронювання вже не в PENDING або строк рішення сплив
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  $ref: '#/components/examples/NotPending'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bookings/{bookingId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/bookingId'
+    post:
+      operationId: cancelBooking
+      summary: Скасування
+      description: |
+        Гість скасовує свій запит у PENDING або бронювання в CONFIRMED;
+        власник — бронювання свого житла в CONFIRMED. Бронювання переходить у
+        CANCELLED з ініціатором GUEST або HOST; повернення й виплату власнику
+        система фіксує за FR-13, FR-15, FR-16; скасування власником
+        враховується лічильником (FR-14). Від моменту заїзду, а також для
+        REJECTED, CANCELLED і COMPLETED скасування неможливе.
+      tags: [Bookings]
+      x-req-ids: [FR-13]
+      x-acceptance-criteria: [AC-13.1, AC-13.2, AC-13.3, AC-13.4, AC-13.5, AC-13.6, AC-14.1, AC-14.2, AC-14.4, AC-15.2, AC-15.3, AC-15.4, AC-15.8, AC-15.9, AC-16.2, AC-16.3, AC-16.4, AC-16.5, AC-16.6, AC-23.1]
+      x-side-effects: [FR-14, FR-15, FR-16, FR-23]
+      x-roles: [guest, host]
+      responses:
+        '200':
+          description: Бронювання в статусі CANCELLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+              examples:
+                cancelled-by-guest:
+                  value:
+                    id: 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+                    listingId: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                    checkIn: '2027-06-12'
+                    checkOut: '2027-06-14'
+                    guestsCount: 2
+                    status: CANCELLED
+                    checkInTime: '14:00'
+                    checkOutTime: '11:00'
+                    turnoverNights: 0
+                    commissionRate: 10
+                    accommodationCost: '2469.12'
+                    commission: '246.91'
+                    prepayment: '2716.03'
+                    checkInAt: '2027-06-12T14:00:00+03:00'
+                    checkOutAt: '2027-06-14T11:00:00+03:00'
+                    decisionDeadline: '2027-06-02T10:00:00+03:00'
+                    cancelledBy: GUEST
+                    cancelledAt: '2027-06-01T12:00:00+03:00'
+                    reviewDeadline: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Момент заїзду настав або статус не дозволяє скасування (AC-13.4, AC-13.5)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Момент заїзду 2027-06-12T14:00:00+03:00 настав, скасування неможливе.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bookings/{bookingId}/payments:
+    parameters:
+      - $ref: '#/components/parameters/bookingId'
+    get:
+      operationId: listBookingPayments
+      summary: Платіжні операції
+      description: |
+        Незмінні записи імітованих операцій за бронюванням: оплата,
+        повернення, стягнення, виплата (NFR-09). Статусів не мають.
+      tags: [Payments]
+      x-req-ids: [FR-15, FR-16]
+      x-acceptance-criteria: [AC-15.1, AC-15.2, AC-15.3, AC-15.4, AC-15.5, AC-15.8, AC-15.9, AC-16.1, AC-16.2, AC-16.3, AC-16.4, AC-16.5, AC-16.6]
+      x-roles: [guest, host]
+      responses:
+        '200':
+          description: Платіжні операції бронювання в порядку фіксації
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Payment'
+              examples:
+                completed-booking:
+                  summary: Основний потік — 3 ночі × 1 234,56, завершення (AC-15.1, AC-16.1)
+                  value:
+                    - id: b0a4e1d3-05c2-4139-8ed2-e2f3a4b5c6dc
+                      type: PREPAYMENT
+                      amount: '4074.04'
+                      accommodationAmount: '3703.68'
+                      commissionAmount: '370.36'
+                      createdAt: '2027-06-01T10:00:00+03:00'
+                    - id: c7e2a9b4-61f3-4a8d-9b2e-0f1a2b3c4d5e
+                      type: PAYOUT
+                      amount: '3703.68'
+                      accommodationAmount: '3703.68'
+                      commissionAmount: '0.00'
+                      createdAt: '2027-06-12T11:00:00+03:00'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bookings/{bookingId}/reviews:
+    parameters:
+      - $ref: '#/components/parameters/bookingId'
+    post:
+      operationId: createReview
+      summary: Залишити відгук
+      description: |
+        Гість бронювання в статусі COMPLETED залишає один відгук до моменту
+        виїзду + 14 днів.
+      tags: [Reviews]
+      x-req-ids: [FR-17]
+      x-acceptance-criteria: [AC-17.1, AC-17.2, AC-17.3, AC-17.5]
+      x-roles: [guest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+            examples:
+              review:
+                value:
+                  rating: 5
+                  text: Чисто, тихо, господиня на зв'язку.
+      responses:
+        '201':
+          description: Відгук опубліковано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+              examples:
+                created:
+                  $ref: '#/components/examples/ReviewVisible'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є гостем бронювання (AC-17.5)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  value:
+                    type: urn:rental-is:problem:forbidden
+                    title: Дію не дозволено
+                    status: 403
+                    code: FORBIDDEN
+                    detail: Відгук залишає лише гість бронювання.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Бронювання не COMPLETED, строк сплив або відгук уже є (AC-17.1, AC-17.2, AC-17.5)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Відгук на це бронювання вже залишено.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Оцінка або текст поза межами (AC-17.3)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ReviewValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /reviews/{reviewId}:
+    parameters:
+      - $ref: '#/components/parameters/reviewId'
+    put:
+      operationId: replaceReview
+      summary: Редагувати відгук
+      description: Автор редагує відгук протягом 24 год після публікації; далі відгук незмінний.
+      tags: [Reviews]
+      x-req-ids: [FR-17]
+      x-acceptance-criteria: [AC-17.3, AC-17.4]
+      x-roles: [guest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+            examples:
+              edit:
+                value:
+                  rating: 4
+                  text: Чисто й тихо, але повільний Wi-Fi.
+      responses:
+        '200':
+          description: Відгук оновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+              examples:
+                updated:
+                  value:
+                    id: 7cd0ad9f-c18e-4df5-8a9e-aebfc0d1e2f8
+                    bookingId: 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+                    rating: 4
+                    text: Чисто й тихо, але повільний Wi-Fi.
+                    visibility: VISIBLE
+                    hiddenReason: null
+                    createdAt: '2027-06-14T18:00:00+03:00'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є автором відгуку
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  value:
+                    type: urn:rental-is:problem:forbidden
+                    title: Дію не дозволено
+                    status: 403
+                    code: FORBIDDEN
+                    detail: Редагувати відгук може лише його автор.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Минуло 24 год від публікації (AC-17.4)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Від публікації відгуку минуло 24 год, редагування неможливе.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Оцінка або текст поза межами (AC-17.3)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ReviewValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /reviews/{reviewId}/complaints:
+    parameters:
+      - $ref: '#/components/parameters/reviewId'
+    post:
+      operationId: createComplaint
+      summary: Скарга на відгук
+      description: |
+        Власник житла подає скаргу на відгук про своє житло. Подання
+        журналюється рівнем INFO, усі модератори отримують повідомлення;
+        скарга з'являється в переліку звернень.
+      tags: [Complaints]
+      x-req-ids: [FR-18]
+      x-acceptance-criteria: [AC-18.1, AC-18.7, AC-22.7, AC-23.3]
+      x-side-effects: [FR-22, FR-23]
+      x-roles: [host]
+      responses:
+        '201':
+          description: Скаргу подано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Complaint'
+              examples:
+                open:
+                  $ref: '#/components/examples/ComplaintOpen'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є власником житла (AC-18.1)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/NotListingOwner'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /complaints:
+    get:
+      operationId: listComplaints
+      summary: Перелік скарг
+      description: |
+        Подані й ще не розглянуті скарги на відгуки (перелік звернень,
+        ADD-01). Не є чергою завдань: призначення виконавця і пріоритетів немає.
+      tags: [Complaints]
+      x-req-ids: [FR-18]
+      x-acceptance-criteria: [AC-18.7]
+      x-roles: [moderator]
+      parameters:
+        - $ref: '#/components/parameters/openStatus'
+      responses:
+        '200':
+          description: Нерозглянуті скарги
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Complaint'
+              examples:
+                open-complaints:
+                  value:
+                    - id: 8de1bea0-d29f-4e06-9baf-bfc0d1e2f3a9
+                      reviewId: 7cd0ad9f-c18e-4df5-8a9e-aebfc0d1e2f8
+                      status: OPEN
+                      decision: null
+                      reason: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Дія доступна лише модератору
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '422':
+          description: Немає параметра status=open
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/StatusParamInvalid'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /complaints/{complaintId}/decision:
+    parameters:
+      - $ref: '#/components/parameters/complaintId'
+    post:
+      operationId: decideComplaint
+      summary: Рішення за скаргою
+      description: |
+        Модератор залишає відгук (`KEEP`) або приховує його (`HIDE`);
+        видалення не передбачене. Власник-скаржник і автор відгуку отримують
+        повідомлення; рішення не оскаржується.
+      tags: [Complaints]
+      x-req-ids: [FR-18]
+      x-acceptance-criteria: [AC-18.2, AC-18.6, AC-18.7, AC-23.1]
+      x-side-effects: [FR-23]
+      x-roles: [moderator]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComplaintDecisionRequest'
+            examples:
+              hide:
+                value:
+                  decision: HIDE
+                  reason: Відгук містить образи.
+      responses:
+        '200':
+          description: Скаргу розглянуто
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Complaint'
+              examples:
+                hidden:
+                  value:
+                    id: 8de1bea0-d29f-4e06-9baf-bfc0d1e2f3a9
+                    reviewId: 7cd0ad9f-c18e-4df5-8a9e-aebfc0d1e2f8
+                    status: DECIDED
+                    decision: HIDE
+                    reason: Відгук містить образи.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Дія доступна лише модератору
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Скаргу вже розглянуто
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  $ref: '#/components/examples/AlreadyDecided'
+        '422':
+          description: Немає рішення або підстави
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ReasonMissing'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bookings/{bookingId}/disputes:
+    parameters:
+      - $ref: '#/components/parameters/bookingId'
+    post:
+      operationId: createDispute
+      summary: Спір щодо скасування
+      description: |
+        Гість подає спір щодо бронювання, скасованого з ініціатором HOST, до
+        моменту скасування + 14 діб. Подання журналюється рівнем INFO, усі
+        модератори отримують повідомлення; спір з'являється в переліку
+        звернень.
+      tags: [Disputes]
+      x-req-ids: [FR-20]
+      x-acceptance-criteria: [AC-20.1, AC-20.2, AC-20.5, AC-22.7, AC-23.3]
+      x-side-effects: [FR-22, FR-23]
+      x-roles: [guest]
+      responses:
+        '201':
+          description: Спір подано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dispute'
+              examples:
+                open:
+                  $ref: '#/components/examples/DisputeOpen'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований або не є гостем бронювання (власник спору не подає, AC-20.2)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  value:
+                    type: urn:rental-is:problem:forbidden
+                    title: Дію не дозволено
+                    status: 403
+                    code: FORBIDDEN
+                    detail: Спір подає лише гість бронювання.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Скасування не власником, строк сплив або спір уже подано (AC-20.1, AC-20.2)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Предметом спору може бути лише скасування з ініціатором HOST.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /disputes:
+    get:
+      operationId: listDisputes
+      summary: Перелік спорів
+      description: Подані й ще не розглянуті спори (перелік звернень, ADD-01).
+      tags: [Disputes]
+      x-req-ids: [FR-20]
+      x-acceptance-criteria: [AC-20.5]
+      x-roles: [moderator]
+      parameters:
+        - $ref: '#/components/parameters/openStatus'
+      responses:
+        '200':
+          description: Нерозглянуті спори
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Dispute'
+              examples:
+                open-disputes:
+                  value:
+                    - id: 9ef2cfb1-e3a0-4f17-8cb0-c0d1e2f3a4ba
+                      bookingId: f4e8c5b7-49a6-457d-8c16-c6d7e8f9a010
+                      status: OPEN
+                      refundRate: null
+                      reason: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Дія доступна лише модератору
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '422':
+          description: Немає параметра status=open
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/StatusParamInvalid'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /disputes/{disputeId}/decision:
+    parameters:
+      - $ref: '#/components/parameters/disputeId'
+    post:
+      operationId: decideDispute
+      summary: Рішення у спорі
+      description: |
+        Модератор встановлює підсумкову частку повернення, не більшу за
+        чинну, з обов'язковою підставою. Рішення остаточне; стягнення з гостя
+        і виплату власнику система фіксує за FR-15 і FR-16; гість і власник
+        отримують повідомлення.
+      tags: [Disputes]
+      x-req-ids: [FR-20]
+      x-acceptance-criteria: [AC-15.5, AC-15.6, AC-16.5, AC-16.6, AC-20.3, AC-20.4, AC-20.5, AC-23.1]
+      x-side-effects: [FR-15, FR-16, FR-23]
+      x-roles: [moderator]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DisputeDecisionRequest'
+            examples:
+              sixty-percent:
+                summary: p = 60% (AC-15.5, AC-20.4)
+                value:
+                  refundRate: 60
+                  reason: Скасування спровокував гість.
+      responses:
+        '200':
+          description: Спір розглянуто
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dispute'
+              examples:
+                decided:
+                  value:
+                    id: 9ef2cfb1-e3a0-4f17-8cb0-c0d1e2f3a4ba
+                    bookingId: f4e8c5b7-49a6-457d-8c16-c6d7e8f9a010
+                    status: DECIDED
+                    refundRate: 60
+                    reason: Скасування спровокував гість.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Дія доступна лише модератору
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Спір уже розглянуто або частка більша за чинну (AC-20.3)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Частка 110% більша за чинну 100%.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Немає підстави або частка поза 0–100 (AC-20.3)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ReasonMissing'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /appeals:
+    post:
+      operationId: createAppeal
+      summary: Оскарження блокування або зняття
+      description: |
+        `BLOCKING` — заблокований користувач оскаржує блокування один раз до
+        моменту рішення + 14 діб. `UNPUBLISHING` — власник оскаржує
+        автоматичне зняття оголошень за FR-14 до моменту зняття + 14 діб.
+        Подання журналюється рівнем INFO, усі модератори (зокрема той, хто
+        заблокував) отримують повідомлення.
+      tags: [Appeals]
+      x-req-ids: [FR-21]
+      x-acceptance-criteria: [AC-21.1, AC-21.5, AC-22.7, AC-23.3]
+      x-side-effects: [FR-22, FR-23]
+      x-roles: [blocked, host]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppealRequest'
+            examples:
+              blocking:
+                value:
+                  subject: BLOCKING
+      responses:
+        '201':
+          description: Оскарження подано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appeal'
+              examples:
+                open:
+                  $ref: '#/components/examples/AppealOpen'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Заблокований користувач оскаржує не блокування або запит робить модератор
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '409':
+          description: Немає що оскаржувати, оскарження вже подано або строк сплив (AC-21.1)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  value:
+                    type: urn:rental-is:problem:state-conflict
+                    title: Дія неможлива в поточному стані
+                    status: 409
+                    code: STATE_CONFLICT
+                    detail: Оскарження цього блокування вже подано.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '422':
+          description: Немає предмета оскарження
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  value:
+                    type: urn:rental-is:problem:validation-failed
+                    title: Запит порушує схему
+                    status: 422
+                    code: VALIDATION_FAILED
+                    detail: "subject: обов'язкове поле, BLOCKING або UNPUBLISHING."
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: listAppeals
+      summary: Перелік оскаржень
+      description: Подані й ще не розглянуті оскарження (перелік звернень, ADD-01).
+      tags: [Appeals]
+      x-req-ids: [FR-21]
+      x-acceptance-criteria: [AC-21.5]
+      x-roles: [moderator]
+      parameters:
+        - $ref: '#/components/parameters/openStatus'
+      responses:
+        '200':
+          description: Нерозглянуті оскарження
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Appeal'
+              examples:
+                open-appeals:
+                  value:
+                    - id: aff3d0c2-f4b1-4028-9dc1-d1e2f3a4b5cb
+                      subject: BLOCKING
+                      status: OPEN
+                      decision: null
+                      reason: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Дія доступна лише модератору
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  $ref: '#/components/examples/Forbidden'
+        '422':
+          description: Немає параметра status=open
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/StatusParamInvalid'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /appeals/{appealId}/decision:
+    parameters:
+      - $ref: '#/components/parameters/appealId'
+    post:
+      operationId: decideAppeal
+      summary: Рішення за оскарженням
+      description: |
+        `GRANTED` для блокування — розблоковує обліковий запис, повертає в
+        публікацію оголошення, зняті через блокування, і видимість відгукам,
+        прихованим через блокування; для зняття — повертає в публікацію
+        оголошення, зняті за FR-14. Скасовані бронювання не відновлюються.
+        Оскарження блокування не розглядає модератор, який заблокував.
+        Заявник отримує повідомлення.
+      tags: [Appeals]
+      x-req-ids: [FR-21]
+      x-acceptance-criteria: [AC-04.4, AC-18.5, AC-21.2, AC-21.3, AC-21.4, AC-21.5, AC-23.1]
+      x-side-effects: [FR-04, FR-18, FR-23]
+      x-roles: [moderator]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppealDecisionRequest'
+            examples:
+              grant:
+                value:
+                  decision: GRANTED
+                  reason: Підстава блокування не підтвердилася.
+      responses:
+        '200':
+          description: Оскарження розглянуто
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appeal'
+              examples:
+                granted:
+                  value:
+                    id: aff3d0c2-f4b1-4028-9dc1-d1e2f3a4b5cb
+                    subject: BLOCKING
+                    status: DECIDED
+                    decision: GRANTED
+                    reason: Підстава блокування не підтвердилася.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Запит не від модератора або від модератора, який заблокував заявника (AC-21.2)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                forbidden:
+                  value:
+                    type: urn:rental-is:problem:forbidden
+                    title: Дію не дозволено
+                    status: 403
+                    code: FORBIDDEN
+                    detail: Модератор, який заблокував користувача, не розглядає його оскарження.
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Оскарження вже розглянуто
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                state-conflict:
+                  $ref: '#/components/examples/AlreadyDecided'
+        '422':
+          description: Немає рішення або підстави
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validation-failed:
+                  $ref: '#/components/examples/ReasonMissing'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /events:
+    get:
+      operationId: listEvents
+      summary: Журнал подій
+      description: |
+        Модератор бачить усі записи; гість — записи своїх бронювань; власник —
+        записи своїх оголошень і бронювань свого житла. Журнал лише читається:
+        операцій зміни чи видалення записів немає (NFR-06). Мітки часу — UTC.
+      tags: [Events]
+      x-req-ids: [FR-22, NFR-06]
+      x-acceptance-criteria: [AC-22.1, AC-22.2, AC-22.3, AC-22.4, AC-22.5, AC-22.6, AC-22.7, AC-22.8, AC-N06.1]
+      x-roles: [guest, host, moderator]
+      parameters:
+        - name: bookingId
+          in: query
+          description: |
+            Лише записи цього бронювання. Доступ за ролями не змінюється
+            (AC-22.5): фільтр звужує лише записи, доступні поточному користувачу.
+          schema:
+            $ref: '#/components/schemas/Id'
+        - name: listingId
+          in: query
+          description: |
+            Лише записи цього оголошення. Доступ за ролями не змінюється
+            (AC-22.5): фільтр звужує лише записи, доступні поточному користувачу.
+          schema:
+            $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: Записи журналу подій, доступні поточному користувачу
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EventLogEntry'
+              examples:
+                dates-unavailable:
+                  summary: Відмова через спільну ніч (AC-08.2, AC-22.4)
+                  value:
+                    - timestamp: '2027-06-01T07:00:00Z'
+                      level: WARN
+                      type: BOOKING_REQUEST_REFUSED
+                      code: DATES_UNAVAILABLE
+                      userId: 2d8b5e4a-7c3f-4ea0-9b49-5f6a7b8c9da3
+                      email: null
+                      bookingId: null
+                      listingId: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+                      correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+                      reason: null
+                      checkIn: '2027-06-11'
+                      checkOut: '2027-06-13'
+                      conflictingBookingIds:
+                        - 5abe8b7d-af6c-4bd3-8e7c-8c9daebfc0d6
+                      conflictReasons: [NIGHTS_OVERLAP]
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Користувач заблокований
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                account-blocked:
+                  $ref: '#/components/examples/AccountBlocked'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /notifications:
+    get:
+      operationId: listNotifications
+      summary: Повідомлення
+      description: Повідомлення поточного користувача всередині системи; зовнішніх каналів немає.
+      tags: [Notifications]
+      x-req-ids: [FR-23]
+      x-acceptance-criteria: [AC-23.1, AC-23.2, AC-23.3]
+      x-roles: [guest, host, moderator, blocked]
+      responses:
+        '200':
+          description: Повідомлення
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+              examples:
+                new-request:
+                  value:
+                    - id: c1b5f2e4-16d3-424a-9fe3-f3a4b5c6d7ed
+                      text: Новий запит на житло «Поділ» на 2027-06-12 — 2027-06-14, 2 особи.
+                      createdAt: '2027-06-01T10:00:00+03:00'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Токен із відповіді `POST /auth/session`.
+
+  parameters:
+    userId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    listingId:
+      name: listingId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    bookingId:
+      name: bookingId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    reviewId:
+      name: reviewId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    complaintId:
+      name: complaintId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    disputeId:
+      name: disputeId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    appealId:
+      name: appealId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    date:
+      name: date
+      in: path
+      required: true
+      description: Ніч, YYYY-MM-DD (Europe/Kyiv).
+      schema:
+        type: string
+        format: date
+      example: '2027-06-20'
+    openStatus:
+      name: status
+      in: query
+      required: true
+      description: Перелік звернень містить лише подані й ще не розглянуті (ADD-01).
+      schema:
+        type: string
+        enum: [open]
+
+  schemas:
+    Id:
+      type: string
+      format: uuid
+      description: Непрозорий ідентифікатор.
+    Money:
+      type: string
+      pattern: '^\d+\.\d{2}$'
+      description: Сума в UAH з точністю 0,01 (NFR-09).
+      examples: ['1234.56']
+    Moment:
+      type: string
+      format: date-time
+      description: Момент зі зсувом Europe/Kyiv (NFR-07).
+    Night:
+      type: string
+      format: date
+      description: Календарна дата YYYY-MM-DD (Europe/Kyiv).
+
+    Problem:
+      type: object
+      description: |
+        Помилка за RFC 9457. `correlationId` збігається з наскрізним
+        ідентифікатором операції в журналі подій (FR-22).
+      required: [type, title, status, code, correlationId]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: 'URN виду urn:rental-is:problem:<код у kebab-case>.'
+        title:
+          type: string
+        status:
+          type: integer
+          enum: [401, 403, 404, 409, 422, 429, 500]
+        code:
+          type: string
+          enum:
+            - MIN_NIGHTS
+            - GUESTS_OUT_OF_RANGE
+            - CHECKIN_TOO_SOON
+            - OWN_LISTING
+            - ACCOUNT_BLOCKED
+            - LISTING_UNPUBLISHED
+            - DATES_UNAVAILABLE
+            - PHOTO_INVALID
+            - INVALID_CREDENTIALS
+            - LOGIN_RESTRICTED
+            - EMAIL_TAKEN
+            - UNAUTHENTICATED
+            - FORBIDDEN
+            - NOT_FOUND
+            - VALIDATION_FAILED
+            - STATE_CONFLICT
+            - INTERNAL_ERROR
+        detail:
+          type: string
+          description: Пояснення; для INTERNAL_ERROR відсутнє.
+        correlationId:
+          $ref: '#/components/schemas/Id'
+        conflictingBookingIds:
+          type: array
+          description: Лише для DATES_UNAVAILABLE — бронювання, з якими виник конфлікт (K-110).
+          items:
+            $ref: '#/components/schemas/Id'
+
+    RegistrationRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 8
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          writeOnly: true
+    Session:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          readOnly: true
+          description: Токен для заголовка Authorization.
+    User:
+      type: object
+      required: [id, email, roles, status]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        roles:
+          type: array
+          readOnly: true
+          items:
+            type: string
+            enum: [GUEST, HOST, MODERATOR]
+        status:
+          type: string
+          readOnly: true
+          enum: [ACTIVE, BLOCKED]
+
+    NewPhoto:
+      type: object
+      required: [data]
+      additionalProperties: false
+      description: |
+        Нова фотографія. JPEG або PNG, не більше 5 242 880 байтів після
+        декодування; інакше — PHOTO_INVALID.
+      properties:
+        data:
+          type: string
+          contentEncoding: base64
+    ExistingPhoto:
+      type: object
+      required: [id]
+      additionalProperties: false
+      description: Фотографія картки, яка лишається без змін (при редагуванні).
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+    Photo:
+      type: object
+      required: [id, url]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        url:
+          type: string
+          format: uri
+          readOnly: true
+    ListingRequest:
+      type: object
+      required: [title, city, address, maxGuests, pricePerNight, photos]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 2000
+        city:
+          type: string
+          minLength: 1
+        address:
+          type: string
+          minLength: 1
+        maxGuests:
+          type: integer
+          minimum: 1
+          maximum: 20
+        pricePerNight:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: Від 0.01 до 1000000.00 включно.
+        photos:
+          type: array
+          description: |
+            Від 1 до 10 фотографій. Порушення кількості, формату чи розміру —
+            PHOTO_INVALID, а не VALIDATION_FAILED (FR-02).
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/NewPhoto'
+              - $ref: '#/components/schemas/ExistingPhoto'
+        checkInTime:
+          type: string
+          pattern: '^(1[2-9]:[0-5]\d|20:00)$'
+          default: '14:00'
+          description: 12:00–20:00 включно, з точністю до хвилини.
+        checkOutTime:
+          type: string
+          pattern: '^(0[89]:[0-5]\d|1[01]:[0-5]\d|12:00)$'
+          default: '11:00'
+          description: 08:00–12:00 включно, з точністю до хвилини.
+        turnoverNights:
+          type: integer
+          enum: [0, 1]
+          default: 0
+    Listing:
+      type: object
+      required: [id, title, city, address, maxGuests, pricePerNight, photos, checkInTime, checkOutTime, turnoverNights, status, averageRating]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        title:
+          type: string
+        description:
+          type: string
+        city:
+          type: string
+        address:
+          type: string
+        maxGuests:
+          type: integer
+        pricePerNight:
+          $ref: '#/components/schemas/Money'
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Photo'
+        checkInTime:
+          type: string
+        checkOutTime:
+          type: string
+        turnoverNights:
+          type: integer
+        status:
+          type: string
+          readOnly: true
+          enum: [PUBLISHED, UNPUBLISHED]
+        averageRating:
+          type: [number, 'null']
+          readOnly: true
+          description: |
+            Неокруглене середнє оцінок неприхованих відгуків (FR-18); null —
+            неприхованих відгуків немає.
+
+    ClosedNight:
+      type: object
+      required: [date]
+      properties:
+        date:
+          $ref: '#/components/schemas/Night'
+
+    BookingRequest:
+      type: object
+      required: [listingId, checkIn, checkOut, guestsCount]
+      additionalProperties: false
+      properties:
+        listingId:
+          $ref: '#/components/schemas/Id'
+        checkIn:
+          $ref: '#/components/schemas/Night'
+        checkOut:
+          allOf: [{ $ref: '#/components/schemas/Night' }]
+          description: Не пізніше за checkIn — MIN_NIGHTS.
+        guestsCount:
+          type: integer
+          description: Поза 1…maxGuests житла — GUESTS_OUT_OF_RANGE.
+    Booking:
+      type: object
+      required: [id, listingId, checkIn, checkOut, guestsCount, status, checkInTime, checkOutTime, turnoverNights, commissionRate, accommodationCost, commission, prepayment, checkInAt, checkOutAt, decisionDeadline, cancelledBy, cancelledAt, reviewDeadline]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        listingId:
+          $ref: '#/components/schemas/Id'
+        checkIn:
+          $ref: '#/components/schemas/Night'
+        checkOut:
+          $ref: '#/components/schemas/Night'
+        guestsCount:
+          type: integer
+        status:
+          type: string
+          readOnly: true
+          enum: [PENDING, CONFIRMED, REJECTED, CANCELLED, COMPLETED]
+        checkInTime:
+          type: string
+          readOnly: true
+          description: Зафіксовано в момент створення запиту.
+        checkOutTime:
+          type: string
+          readOnly: true
+          description: Зафіксовано в момент створення запиту.
+        turnoverNights:
+          type: integer
+          readOnly: true
+          description: Зафіксовано в момент створення запиту.
+        commissionRate:
+          type: number
+          readOnly: true
+          description: Відсоток комісії, зафіксований у момент створення запиту.
+        accommodationCost:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          readOnly: true
+        commission:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          readOnly: true
+        prepayment:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          readOnly: true
+        checkInAt:
+          allOf: [{ $ref: '#/components/schemas/Moment' }]
+          readOnly: true
+        checkOutAt:
+          allOf: [{ $ref: '#/components/schemas/Moment' }]
+          readOnly: true
+        decisionDeadline:
+          allOf: [{ $ref: '#/components/schemas/Moment' }]
+          readOnly: true
+        cancelledBy:
+          type: [string, 'null']
+          readOnly: true
+          enum: [GUEST, HOST, PLATFORM, null]
+        cancelledAt:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+          description: Момент скасування; від нього рахується строк подання спору (FR-20).
+        reviewDeadline:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+          description: |
+            Moment або null. Для бронювання в COMPLETED — checkOutAt + 14 днів:
+            до цього моменту доступна дія «залишити відгук» (AC-12.3, FR-17);
+            для інших статусів — null.
+
+    Payment:
+      type: object
+      description: Незмінний запис факту імітованої операції; статусів немає.
+      required: [id, type, amount, accommodationAmount, commissionAmount, createdAt]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        type:
+          type: string
+          readOnly: true
+          enum: [PREPAYMENT, REFUND, CHARGE, PAYOUT]
+          description: 'PREPAYMENT — оплата; REFUND — повернення; CHARGE — стягнення; PAYOUT — виплата власнику.'
+        amount:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          readOnly: true
+        accommodationAmount:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          readOnly: true
+          description: Частина суми, що належить до вартості проживання (FR-15).
+        commissionAmount:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          readOnly: true
+          description: Частина суми, що належить до комісії; для виплати завжди 0.00 (FR-16).
+        createdAt:
+          allOf: [{ $ref: '#/components/schemas/Moment' }]
+          readOnly: true
+
+    ReviewRequest:
+      type: object
+      required: [rating, text]
+      additionalProperties: false
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        text:
+          type: string
+          minLength: 10
+          maxLength: 1000
+    Review:
+      type: object
+      required: [id, bookingId, rating, text, visibility, hiddenReason, createdAt]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        bookingId:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        rating:
+          type: integer
+        text:
+          type: string
+        visibility:
+          type: string
+          readOnly: true
+          enum: [VISIBLE, HIDDEN]
+        hiddenReason:
+          type: [string, 'null']
+          readOnly: true
+          enum: [AUTHOR_BLOCKED, COMPLAINT, null]
+        createdAt:
+          allOf: [{ $ref: '#/components/schemas/Moment' }]
+          readOnly: true
+          description: Момент публікації; від нього рахуються 24 год редагування.
+
+    Complaint:
+      type: object
+      required: [id, reviewId, status, decision, reason]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        reviewId:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        status:
+          type: string
+          readOnly: true
+          enum: [OPEN, DECIDED]
+        decision:
+          type: [string, 'null']
+          readOnly: true
+          enum: [KEEP, HIDE, null]
+        reason:
+          type: [string, 'null']
+          readOnly: true
+    ComplaintDecisionRequest:
+      type: object
+      required: [decision, reason]
+      additionalProperties: false
+      properties:
+        decision:
+          type: string
+          enum: [KEEP, HIDE]
+        reason:
+          type: string
+          minLength: 1
+
+    Dispute:
+      type: object
+      required: [id, bookingId, status, refundRate, reason]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        bookingId:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        status:
+          type: string
+          readOnly: true
+          enum: [OPEN, DECIDED]
+        refundRate:
+          type: [number, 'null']
+          readOnly: true
+          description: Підсумкова частка повернення, %, після рішення.
+        reason:
+          type: [string, 'null']
+          readOnly: true
+    DisputeDecisionRequest:
+      type: object
+      required: [refundRate, reason]
+      additionalProperties: false
+      properties:
+        refundRate:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Підсумкова частка повернення, %; не більша за чинну — інакше STATE_CONFLICT.
+        reason:
+          type: string
+          minLength: 1
+
+    AppealRequest:
+      type: object
+      required: [subject]
+      additionalProperties: false
+      properties:
+        subject:
+          type: string
+          enum: [BLOCKING, UNPUBLISHING]
+          description: 'BLOCKING — блокування; UNPUBLISHING — автоматичне зняття оголошень за FR-14.'
+    Appeal:
+      type: object
+      required: [id, subject, status, decision, reason]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        subject:
+          type: string
+          enum: [BLOCKING, UNPUBLISHING]
+        status:
+          type: string
+          readOnly: true
+          enum: [OPEN, DECIDED]
+        decision:
+          type: [string, 'null']
+          readOnly: true
+          enum: [GRANTED, DENIED, null]
+        reason:
+          type: [string, 'null']
+          readOnly: true
+    AppealDecisionRequest:
+      type: object
+      required: [decision, reason]
+      additionalProperties: false
+      properties:
+        decision:
+          type: string
+          enum: [GRANTED, DENIED]
+        reason:
+          type: string
+          minLength: 1
+
+    ModerationReasonRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          description: Підстава рішення модератора; журналюється (FR-22).
+
+    EventLogEntry:
+      type: object
+      required: [timestamp, level, type, userId, bookingId, listingId, correlationId]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Мітка часу в UTC.
+        level:
+          type: string
+          readOnly: true
+          enum: [INFO, WARN, ERROR]
+        type:
+          type: string
+          readOnly: true
+        code:
+          type: [string, 'null']
+          readOnly: true
+          description: Код відмови для записів WARN (FR-07, PHOTO_INVALID).
+        userId:
+          type: [string, 'null']
+          format: uuid
+          readOnly: true
+          description: Порожній для невдалого входу з неіснуючим email.
+        email:
+          type: [string, 'null']
+          readOnly: true
+          description: Введений email — лише для невдалого входу з неіснуючим обліковим записом.
+        bookingId:
+          type: [string, 'null']
+          format: uuid
+          readOnly: true
+        listingId:
+          type: [string, 'null']
+          format: uuid
+          readOnly: true
+        correlationId:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        reason:
+          type: [string, 'null']
+          readOnly: true
+          description: Підстава рішення модератора.
+        checkIn:
+          type: [string, 'null']
+          format: date
+          readOnly: true
+          description: Запитаний діапазон — для DATES_UNAVAILABLE.
+        checkOut:
+          type: [string, 'null']
+          format: date
+          readOnly: true
+          description: Запитаний діапазон — для DATES_UNAVAILABLE.
+        conflictingBookingIds:
+          type: array
+          readOnly: true
+          description: Для DATES_UNAVAILABLE — усі бронювання, з якими виник конфлікт.
+          items:
+            $ref: '#/components/schemas/Id'
+        conflictReasons:
+          type: array
+          readOnly: true
+          description: |
+            Для DATES_UNAVAILABLE: NIGHTS_OVERLAP — перетин ночей; TURNOVER —
+            потрапляння в перерву; CLOSED_NIGHT — ніч, закрита власником.
+          items:
+            type: string
+            enum: [NIGHTS_OVERLAP, TURNOVER, CLOSED_NIGHT]
+
+    Notification:
+      type: object
+      required: [id, text, createdAt]
+      properties:
+        id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          readOnly: true
+        text:
+          type: string
+          readOnly: true
+        createdAt:
+          allOf: [{ $ref: '#/components/schemas/Moment' }]
+          readOnly: true
+
+  responses:
+    Unauthenticated:
+      description: Дія потребує входу
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            unauthenticated:
+              value:
+                type: urn:rental-is:problem:unauthenticated
+                title: Потрібен вхід
+                status: 401
+                code: UNAUTHENTICATED
+                detail: Дія потребує входу в систему.
+                correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    NotFound:
+      description: Ресурсу немає або його не можна бачити
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            not-found:
+              value:
+                type: urn:rental-is:problem:not-found
+                title: Не знайдено
+                status: 404
+                code: NOT_FOUND
+                detail: Ресурс не існує або недоступний.
+                correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    InternalError:
+      description: Збій системи
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            internal-error:
+              value:
+                type: urn:rental-is:problem:internal-error
+                title: Збій системи
+                status: 500
+                code: INTERNAL_ERROR
+                correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+
+  examples:
+    AccountBlocked:
+      value:
+        type: urn:rental-is:problem:account-blocked
+        title: Обліковий запис заблоковано
+        status: 403
+        code: ACCOUNT_BLOCKED
+        detail: Заблокований користувач може лише входити, бачити свої повідомлення й поїздки і подати оскарження.
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    Forbidden:
+      value:
+        type: urn:rental-is:problem:forbidden
+        title: Дію не дозволено
+        status: 403
+        code: FORBIDDEN
+        detail: Дія не дозволена цій ролі.
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    NotListingOwner:
+      value:
+        type: urn:rental-is:problem:forbidden
+        title: Дію не дозволено
+        status: 403
+        code: FORBIDDEN
+        detail: Дія доступна лише власнику житла.
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    ReasonMissing:
+      value:
+        type: urn:rental-is:problem:validation-failed
+        title: Запит порушує схему
+        status: 422
+        code: VALIDATION_FAILED
+        detail: "reason: обов'язкове поле."
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    DateInvalid:
+      value:
+        type: urn:rental-is:problem:validation-failed
+        title: Запит порушує схему
+        status: 422
+        code: VALIDATION_FAILED
+        detail: 'date: очікується дата YYYY-MM-DD.'
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    StatusParamInvalid:
+      value:
+        type: urn:rental-is:problem:validation-failed
+        title: Запит порушує схему
+        status: 422
+        code: VALIDATION_FAILED
+        detail: "status: обов'язковий параметр зі значенням open."
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    NotPending:
+      value:
+        type: urn:rental-is:problem:state-conflict
+        title: Дія неможлива в поточному стані
+        status: 409
+        code: STATE_CONFLICT
+        detail: Бронювання вже не в статусі PENDING.
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    AlreadyDecided:
+      value:
+        type: urn:rental-is:problem:state-conflict
+        title: Дія неможлива в поточному стані
+        status: 409
+        code: STATE_CONFLICT
+        detail: Звернення вже розглянуто, рішення змінити неможливо.
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    ListingValidationFailed:
+      value:
+        type: urn:rental-is:problem:validation-failed
+        title: Запит порушує схему
+        status: 422
+        code: VALIDATION_FAILED
+        detail: 'maxGuests: ціле число від 1 до 20, отримано 21.'
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    PhotoInvalid:
+      value:
+        type: urn:rental-is:problem:photo-invalid
+        title: Фотографії не відповідають вимогам
+        status: 422
+        code: PHOTO_INVALID
+        detail: Фотографія 1 має розмір 5242881 байт, більше за 5242880.
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    ReviewValidationFailed:
+      value:
+        type: urn:rental-is:problem:validation-failed
+        title: Запит порушує схему
+        status: 422
+        code: VALIDATION_FAILED
+        detail: 'text: від 10 до 1000 символів, отримано 9.'
+        correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
+    ListingRequestPodil:
+      value:
+        title: Поділ
+        description: Світла квартира біля Контрактової площі.
+        city: Київ
+        address: вул. Сагайдачного, 1
+        maxGuests: 4
+        pricePerNight: '1234.56'
+        photos:
+          - data: /9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U
+        checkInTime: '14:00'
+        checkOutTime: '11:00'
+        turnoverNights: 0
+    ListingPodil:
+      value:
+        id: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+        title: Поділ
+        description: Світла квартира біля Контрактової площі.
+        city: Київ
+        address: вул. Сагайдачного, 1
+        maxGuests: 4
+        pricePerNight: '1234.56'
+        photos:
+          - id: d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+            url: http://127.0.0.1:4010/photos/d2c6a3f5-27e4-435b-8af4-a4b5c6d7e8fe
+        checkInTime: '14:00'
+        checkOutTime: '11:00'
+        turnoverNights: 0
+        status: PUBLISHED
+        averageRating: 4.5
+    BookingPending:
+      summary: Запит Марії на [2027-06-12, 2027-06-14), 2 особи — заїзд у день виїзду B
+      value:
+        id: 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+        listingId: 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+        checkIn: '2027-06-12'
+        checkOut: '2027-06-14'
+        guestsCount: 2
+        status: PENDING
+        checkInTime: '14:00'
+        checkOutTime: '11:00'
+        turnoverNights: 0
+        commissionRate: 10
+        accommodationCost: '2469.12'
+        commission: '246.91'
+        prepayment: '2716.03'
+        checkInAt: '2027-06-12T14:00:00+03:00'
+        checkOutAt: '2027-06-14T11:00:00+03:00'
+        decisionDeadline: '2027-06-02T10:00:00+03:00'
+        cancelledBy: null
+        cancelledAt: null
+        reviewDeadline: null
+    ReviewVisible:
+      value:
+        id: 7cd0ad9f-c18e-4df5-8a9e-aebfc0d1e2f8
+        bookingId: 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+        rating: 5
+        text: Чисто, тихо, господиня на зв'язку.
+        visibility: VISIBLE
+        hiddenReason: null
+        createdAt: '2027-06-14T18:00:00+03:00'
+    ComplaintOpen:
+      value:
+        id: 8de1bea0-d29f-4e06-9baf-bfc0d1e2f3a9
+        reviewId: 7cd0ad9f-c18e-4df5-8a9e-aebfc0d1e2f8
+        status: OPEN
+        decision: null
+        reason: null
+    DisputeOpen:
+      value:
+        id: 9ef2cfb1-e3a0-4f17-8cb0-c0d1e2f3a4ba
+        bookingId: f4e8c5b7-49a6-457d-8c16-c6d7e8f9a010
+        status: OPEN
+        refundRate: null
+        reason: null
+    AppealOpen:
+      value:
+        id: aff3d0c2-f4b1-4028-9dc1-d1e2f3a4b5cb
+        subject: BLOCKING
+        status: OPEN
+        decision: null
+        reason: null

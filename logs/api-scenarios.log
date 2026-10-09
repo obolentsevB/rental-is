@@ -1,0 +1,25 @@
+﻿Протокол контрактних сценаріїв rental-is
+Дата: 2026-10-09 15:55:23 +03:00; коміт: 331dbae; mock: http://127.0.0.1:4010
+Специфікація: api/openapi.yaml; сценарії: P — позитивні, N — негативні, C — перевірка контракту mock-ом
+
+PASS  P-01  очікувано 201                       отримано 201                       Реєстрація, пароль 8 символів (FR-01, AC-01.2)
+PASS  P-02  очікувано 201                       отримано 201                       Вхід (FR-01, AC-01.3)
+PASS  P-03  очікувано 200                       отримано 200                       Пошук за містом, датами, особами (FR-05)
+PASS  P-04  очікувано 201                       отримано 201                       Заїзд у день виїзду попереднього (FR-08, AC-08.1)
+PASS  P-05  очікувано 200                       отримано 200                       Підтвердження власником (FR-09)
+PASS  P-06  очікувано 200                       отримано 200                       Мої поїздки (FR-12)
+PASS  P-07  очікувано 201                       отримано 201                       Відгук про завершене бронювання (FR-17)
+PASS  N-01  очікувано 409 DATES_UNAVAILABLE     отримано 409 DATES_UNAVAILABLE     Спільна ніч (FR-08, AC-08.2)
+PASS  N-02  очікувано 403 ACCOUNT_BLOCKED       отримано 403 ACCOUNT_BLOCKED       Заблокований користувач (FR-01, AC-01.7)
+PASS  N-03  очікувано 422 VALIDATION_FAILED     отримано 422 VALIDATION_FAILED     Пароль із 7 символів (FR-01, AC-01.2)
+      порушення контракту (sl-violations): [{"location":["request","body","password"],"severity":"Error","code":"minLength","message":"Request body property password must NOT have fewer than 8 characters"}]
+PASS  N-04  очікувано 401 UNAUTHENTICATED       отримано 401 UNAUTHENTICATED       Запит без входу (FR-01, AC-01.4)
+      порушення контракту (sl-violations): [{"location":["request"],"severity":"Error","code":401,"message":"Invalid security scheme used"}]
+PASS  N-05  очікувано 422 GUESTS_OUT_OF_RANGE   отримано 422 GUESTS_OUT_OF_RANGE   Осіб більше за максимум (FR-07, AC-07.3)
+PASS  N-06  очікувано 403 OWN_LISTING           отримано 403 OWN_LISTING           Власник бронює своє житло (FR-07, AC-07.4)
+PASS  N-07  очікувано 422 PHOTO_INVALID         отримано 422 PHOTO_INVALID         Порушення вимог до фото (FR-02, ADD-01)
+PASS  C-01  очікувано 422 VALIDATION_FAILED     отримано 422 VALIDATION_FAILED     Без обов'язкового checkOut (mock) (контракт)
+      порушення контракту (sl-violations): [{"location":["request","body"],"severity":"Error","code":"required","message":"Request body must have required property 'checkOut'"}]
+PASS  N-08  очікувано 409 STATE_CONFLICT        отримано 409 STATE_CONFLICT        Підтвердження скасованого (FR-09)
+
+Разом: 16; PASS: 16; FAIL: 0

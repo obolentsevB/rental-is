@@ -12,7 +12,7 @@ ISSUES = f"{ROOT}/docs/tickets-issues.csv"
 BLANKET = set()  # загальні тікети тепер вилучаються через EXCLUDED/OVERRIDE
 # У матриці — лише тікети, що прямо реалізують, перевіряють, документують
 # або уточнюють вимогу.
-EXCLUDED = {"T-09",                                               # загальний gate
+EXCLUDED = {"T-09", "T-110",                                               # загальний gate
             "T-92", "T-94", "T-97", "T-101", "T-102", "T-106", "T-107"}  # оновлення traceability
 OVERRIDE = {"T-91": "NFR-02, NFR-03, NFR-04"}  # прямо перевіряє AC-N02.x, AC-N03.1, AC-N04.1
 

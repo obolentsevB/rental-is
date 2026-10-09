@@ -1,0 +1,9 @@
+# Конфігурація валідатора OpenAPI (ЛР №4)
+# Набір правил — recommended. Попередження info-license залишено свідомо:
+# це внутрішній API навчального проєкту, ліцензія не визначена
+# (див. logs/gate-api.md).
+extends:
+  - recommended
+apis:
+  main:
+    root: api/openapi.yaml
