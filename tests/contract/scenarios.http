@@ -1,0 +1,73 @@
+# Контрактні сценарії rental-is для REST Client (VS Code).
+# Mock: npx @stoplight/prism-cli mock api/openapi.yaml --port 4010 --errors
+# Дані P-04 і N-01 — зі сценаріїв spec/bdd/booking.feature:
+# бронювання B займає ночі [2027-06-10, 2027-06-12).
+
+@base = http://127.0.0.1:4010
+@token = Bearer test-guest
+@listingId = 4fad7a6c-9e5b-4ac2-9d6b-7b8c9daebfc5
+@bookingId = 6bcf9c8e-b07d-4ce4-9f8d-9daebfc0d1e7
+
+### P-04 Заїзд у день виїзду попереднього гостя (FR-08, AC-08.1)
+POST {{base}}/bookings
+Authorization: {{token}}
+Content-Type: application/json
+Prefer: code=201, example=checkin-on-previous-checkout
+
+{
+  "listingId": "{{listingId}}",
+  "checkIn": "2027-06-12",
+  "checkOut": "2027-06-14",
+  "guestsCount": 2
+}
+
+### N-01 Спільна ніч 2027-06-11 з бронюванням B (FR-08, AC-08.2)
+POST {{base}}/bookings
+Authorization: {{token}}
+Content-Type: application/json
+Prefer: code=409, example=dates-unavailable
+
+{
+  "listingId": "{{listingId}}",
+  "checkIn": "2027-06-11",
+  "checkOut": "2027-06-13",
+  "guestsCount": 2
+}
+
+### C-01 КОНТРАКТ: запит без обов'язкового checkOut відхиляє сам mock (без Prefer)
+# Причина — у заголовку відповіді sl-violations; тіло — перший приклад 422 зі специфікації
+POST {{base}}/bookings
+Authorization: {{token}}
+Content-Type: application/json
+
+{
+  "listingId": "{{listingId}}",
+  "checkIn": "2027-06-12",
+  "guestsCount": 2
+}
+
+### N-04 Запит без входу (FR-01, AC-01.4)
+POST {{base}}/bookings
+Content-Type: application/json
+
+{
+  "listingId": "{{listingId}}",
+  "checkIn": "2027-06-12",
+  "checkOut": "2027-06-14",
+  "guestsCount": 2
+}
+
+### N-07 Картка житла з порушенням вимог до фото (FR-02, ADD-01)
+POST {{base}}/listings
+Authorization: {{token}}
+Content-Type: application/json
+Prefer: code=422, example=photo-invalid
+
+{
+  "title": "Поділ",
+  "city": "Київ",
+  "address": "вул. Сагайдачного, 1",
+  "maxGuests": 4,
+  "pricePerNight": "1234.56",
+  "photos": [{ "data": "R0lGODlhAQABAAAAACw=" }]
+}
