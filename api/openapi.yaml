@@ -1092,6 +1092,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               examples:
+                validation-failed:
+                  value:
+                    type: urn:rental-is:problem:validation-failed
+                    title: Запит порушує схему
+                    status: 422
+                    code: VALIDATION_FAILED
+                    detail: 'checkOut: очікується дата YYYY-MM-DD.'
+                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
                 min-nights:
                   value:
                     type: urn:rental-is:problem:min-nights
@@ -1115,14 +1123,6 @@ paths:
                     status: 422
                     code: CHECKIN_TOO_SOON
                     detail: До моменту заїзду 2027-06-12T14:00:00+03:00 лишається менше 1 години.
-                    correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
-                validation-failed:
-                  value:
-                    type: urn:rental-is:problem:validation-failed
-                    title: Запит порушує схему
-                    status: 422
-                    code: VALIDATION_FAILED
-                    detail: 'checkOut: очікується дата YYYY-MM-DD.'
                     correlationId: e3d7b4a6-38f5-446c-9b05-b5c6d7e8f90f
         '500':
           $ref: '#/components/responses/InternalError'
