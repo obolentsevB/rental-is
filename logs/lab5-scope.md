@@ -95,6 +95,21 @@
       роль owner називається `host`.
     - Відповіді 401 і 403 перевіряються API-тестами згідно з контрактом.
     - schemathesis запускається із заголовком `Authorization` тестового токена.
+12. **Контрактна перевірка schemathesis** запускається без перевірки `positive_data_acceptance`
+    (`--exclude-checks positive_data_acceptance`). Ця перевірка вимагає, щоб будь-який запит,
+    що відповідає схемі, приймався. Контракт же свідомо відхиляє чотири такі запити через 422.
+    Тому всі 4 знахідки ST202 — це передбачена контрактом поведінка, а не невідповідність:
+    - `GET /listings` з `checkIn` без `checkOut` — VALIDATION_FAILED (приклад 422 у самому контракті);
+    - `POST /listings` з `photos: []` — PHOTO_INVALID (кількість фотографій навмисно не обмежена
+      схемою, FR-02, ADD-01);
+    - `PUT /listings/{listingId}` з ціною поза 0.01–1 000 000.00 — VALIDATION_FAILED (межі ціни
+      перевіряє сервер, застереження 3 у `logs/gate-api.md`);
+    - `POST /bookings` з `checkIn` = `checkOut` — MIN_NIGHTS (порядок дат не обмежено схемою,
+      бо порушення має власний код FR-07).
+
+    Решта перевірок schemathesis лишається увімкненою. Прогін виконується з токеном кожної
+    ролі (guest-token, host-token, moderator-token): `scripts/serve_contract.py` запускає
+    сервер, `scripts/contract_check.ps1` — перевірку.
 
 ## Зведення AC
 
