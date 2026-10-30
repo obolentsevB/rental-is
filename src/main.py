@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.routing import Match
 
 from src import bookings
 from src.auth import TOKENS
@@ -88,11 +89,26 @@ async def handle_validation(request: Request, exc: RequestValidationError):
     return problem_response("VALIDATION_FAILED", f"{field}: {error['msg']}")
 
 
+def allowed_methods(request: Request) -> str:
+    """Методи всіх маршрутів, шлях яких збігається із запитом (для заголовка Allow, RFC 9110)."""
+    methods = set()
+    for route in request.app.routes:
+        match, _ = route.matches(request.scope)
+        if match != Match.NONE:
+            methods |= getattr(route, "methods", None) or set()
+    return ", ".join(sorted(methods))
+
+
 @app.exception_handler(StarletteHTTPException)
 async def handle_http(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404:
         return problem_response("NOT_FOUND", "Ресурс не існує або недоступний.")
-    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    if exc.status_code == 400:
+        # Тіло, яке не вдається розібрати; статусу 400 у контракті немає — це порушення схеми.
+        return problem_response("VALIDATION_FAILED", "Тіло запиту не вдається розібрати як JSON.")
+    if exc.status_code == 405:
+        return JSONResponse({"detail": exc.detail}, status_code=405, headers={"Allow": allowed_methods(request)})
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 
 @app.exception_handler(Exception)
