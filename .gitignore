@@ -19,4 +19,4 @@ Thumbs.db
 *.log
 
 !logs/api-*.log
-!logs/test-runs/*.log
+!logs/test-runs/*.log.schemathesis/
