@@ -25,8 +25,9 @@ def search_listings(
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
     results = service.search(city, checkIn, checkOut, guestsCount, priceMin, priceMax, sort)
-    response.headers["X-Total-Count"] = str(len(results))
-    return [service.to_api(record) for record in results[offset:offset + limit]]
+    page, total = service.paginate(results, limit, offset)
+    response.headers["X-Total-Count"] = str(total)
+    return [service.to_api(record) for record in page]
 
 
 @router.post("/listings", status_code=201)

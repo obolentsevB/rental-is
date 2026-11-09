@@ -120,6 +120,11 @@ def search(
     return results
 
 
+def paginate(items: list[dict], limit: int, offset: int) -> tuple[list[dict], int]:
+    """FR-ADD-02: сторінка впорядкованого результату та загальна кількість до застосування limit і offset."""
+    return items[offset:offset + limit], len(items)
+
+
 def create(owner: dict, body: ListingRequest, base_url: str) -> dict:
     """FR-02: нове оголошення одразу в стані Published."""
     photos = _resolve_photos(body.photos, base_url)
