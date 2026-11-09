@@ -2,7 +2,7 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 
 from src.auth import Moderator, NonModerator, OptionalUser, User
 from src.schemas import ListingRequest, ListingSort, ModerationReasonRequest, MoneyFilter
@@ -13,6 +13,7 @@ router = APIRouter()
 
 @router.get("/listings")
 def search_listings(
+    response: Response,
     city: str | None = None,
     checkIn: date | None = None,
     checkOut: date | None = None,
@@ -20,9 +21,12 @@ def search_listings(
     priceMin: MoneyFilter = None,
     priceMax: MoneyFilter = None,
     sort: ListingSort | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ):
     results = service.search(city, checkIn, checkOut, guestsCount, priceMin, priceMax, sort)
-    return [service.to_api(record) for record in results]
+    response.headers["X-Total-Count"] = str(len(results))
+    return [service.to_api(record) for record in results[offset:offset + limit]]
 
 
 @router.post("/listings", status_code=201)

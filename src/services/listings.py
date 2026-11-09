@@ -95,7 +95,11 @@ def search(
     price_max: str | None,
     sort: str | None,
 ) -> list[dict]:
-    """FR-05: житло в стані Published за необов'язковими фільтрами."""
+    """FR-05: житло в стані Published за необов'язковими фільтрами.
+
+    Порядок (FR-ADD-02): без `sort` і для рівних значень ключа — за моментом створення.
+    Його дають порядок вставки у сховищі та стабільність `list.sort`.
+    """
     _check_date_range(check_in, check_out)
 
     def matches(record: dict) -> bool:
