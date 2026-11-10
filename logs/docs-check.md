@@ -140,3 +140,42 @@
 | 2.3, 3.1, 4.1 | Приклади **Request body** | Збігається (звіт користувача) |
 | 5 | Коди відмов у **Server response** | Збігається (звіт користувача). Коди раніше підтверджено запитами до застосунку, див. розділ «API і код» |
 | 6 | Обмеження версії: відсутні операції не показано у Swagger UI | Збігається (звіт користувача) |
+
+## README: повторна перевірка
+
+| Параметр | Значення |
+|----------|----------|
+| Дата | 2026-11-10 |
+| Чистий клон | `git clone` гілки `final/lab6` на коміті `cb91039`, нове середовище `.venv` |
+| Середовище | Windows 11, Windows PowerShell 5.1, Python 3.14.3; встановлено fastapi 0.162.4, pydantic 2.14.3, ruff 0.17.4, Sphinx 9.2.0, schemathesis 4.33.1 |
+| Що змінилося після першої перевірки | Закомічено `requirements.txt`, `pyproject.toml`, `.gitignore` (`8af9d7a`); виправлено два дефекти контракту (`7819622`, `57efe1b`); піднято ліміт розміру запиту на сервері контрактної перевірки (`ed98d94`) |
+| Результат | 13 команд пройшли, розбіжностей немає. 3 команди для bash не перевірено: немає Linux |
+
+| Команда з README | Результат у чистому клоні | OK/виправлено |
+|------------------|---------------------------|---------------|
+| `py -3.14 -m venv .venv` | Середовище створено | OK |
+| `python3.14 -m venv .venv` (bash) | Не запускалася: немає Linux | Не перевірено |
+| `.\.venv\Scripts\Activate.ps1` | `python` вказує на `.venv` | OK |
+| `source .venv/bin/activate` (bash) | Не запускалася: немає Linux | Не перевірено |
+| `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned` | Виконано без помилок | OK |
+| `pip install -r requirements.txt` | Код 0, встановлено ruff і sphinx | Виправлено (`8af9d7a`) |
+| `uvicorn src.main:app` | `/docs` — 200, `/listings` — 200 | OK |
+| `uvicorn src.main:app --port 9000` | `/docs` на порту 9000 — 200 | OK |
+| `python scripts/serve_contract.py` | `/docs` — 200; `GET /bookings?role=guest` із `guest-token` — 200 | OK |
+| `pytest` | 163 passed | OK |
+| `ruff check src tests` | Порушень немає | Виправлено (`8af9d7a`) |
+| `ruff format --check src tests` | 21 файл відформатовано | Виправлено (`8af9d7a`) |
+| `.\scripts\contract_check.ps1` | Код 0. schemathesis 4.33.1: guest — 2514, host — 2193, moderator — 2002 згенерованих випадків, усі passed | Виправлено (`7819622`, `57efe1b`, `ed98d94`) |
+| `pwsh scripts/contract_check.ps1` (bash) | Не запускалася: немає Linux | Не перевірено |
+| `sphinx-build -W -b html docs/reference docs/reference/_build/html` | Збірка без попереджень | Виправлено (`8af9d7a`) |
+| `npx @redocly/cli@2.76.0 build-docs api/openapi.yaml --output docs/api.html` | `bundled successfully`. Перезібраний файл відрізняється від закоміченого лише кінцями рядків | OK |
+
+Твердження README про `docs/api.html` версії 1.1.0 тепер справджується й у чистому клоні: файл закомічено.
+
+Дефекти контракту виявив schemathesis 4.33.1:
+- `"turnoverNights": false` і `true` приймалися як 0 і 1;
+- `"description": null` приймався, хоча поле має тип лише `string`.
+
+Обидва тепер дають 422 `VALIDATION_FAILED`. На обидва є регресійні тести, а згенерована схема OpenAPI не змінилася.
+
+Сервер `scripts/serve_contract.py` тепер приймає рядок запиту й заголовки до 1 МБ. schemathesis 4.33.1 генерує query-рядки `GET /listings` довжиною близько 65 КБ, а за стандартного ліміту h11 у 16 КБ uvicorn відповідав 400 ще до застосунку. Контракт обмежень транспорту не описує. Звичайного запуску `uvicorn src.main:app` ця зміна не стосується.
