@@ -4,3 +4,5 @@ pytest
 httpx
 schemathesis
 tzdata
+ruff
+sphinx

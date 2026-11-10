@@ -4,6 +4,7 @@
 взято лише з api/openapi.yaml; вимоги й AC — зі spec/srs.md (v1.1).
 Дати бронювань — у далекому майбутньому, щоб не спрацьовувала CHECKIN_TOO_SOON (FR-07 №5).
 """
+
 import base64
 import struct
 import uuid
@@ -22,7 +23,8 @@ def _chunk(kind, data):
 
 
 def png_photo(size=None):
-    """Коректний PNG 1×1 у base64; `size` — точний розмір файлу в байтах (добирається приватним чанком)."""
+    """Коректний PNG 1×1 у base64; `size` — точний розмір файлу в байтах (добирається приватним
+    чанком)."""
     head = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
     body = _chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\xff"))
     tail = _chunk(b"IEND", b"")
@@ -120,7 +122,12 @@ def create_listing(client, headers, **overrides):
 
 
 def create_booking(client, headers, listing_id, check_in, check_out, guests_count=2):
-    body = {"listingId": listing_id, "checkIn": check_in, "checkOut": check_out, "guestsCount": guests_count}
+    body = {
+        "listingId": listing_id,
+        "checkIn": check_in,
+        "checkOut": check_out,
+        "guestsCount": guests_count,
+    }
     response = client.post("/bookings", json=body, headers=headers)
     assert response.status_code == 201
     return response.json()
@@ -133,7 +140,9 @@ def confirm(client, headers, booking_id):
 
 
 def unpublish(client, headers, listing_id, reason="Фотографії не відповідають житлу."):
-    return client.post(f"/listings/{listing_id}/unpublish", json={"reason": reason}, headers=headers)
+    return client.post(
+        f"/listings/{listing_id}/unpublish", json={"reason": reason}, headers=headers
+    )
 
 
 def search_ids(client, **params):
@@ -193,7 +202,8 @@ def test_create_listing_without_required_field_returns_422(client, host, missing
     ids=["no-photos", "eleven-photos", "photo-5242881-bytes"],
 )
 def test_create_listing_with_invalid_photos_returns_422(client, host, photos):
-    """FR-02; AC-02.1 (без фотографій, з 11 фотографіями або з файлом 5 242 881 байт — PHOTO_INVALID)."""
+    """FR-02; AC-02.1 (без фотографій, з 11 фотографіями або з файлом 5 242 881 байт —
+    PHOTO_INVALID)."""
     response = client.post("/listings", json=listing_request(photos=photos), headers=host)
 
     assert_problem(response, 422, "PHOTO_INVALID")
@@ -202,7 +212,9 @@ def test_create_listing_with_invalid_photos_returns_422(client, host, photos):
 def test_create_listing_with_photo_of_max_size_returns_201(client, host):
     """FR-02; AC-02.1 (фотографія розміром рівно 5 242 880 байтів приймається)."""
     response = client.post(
-        "/listings", json=listing_request(photos=[{"data": png_photo(MAX_PHOTO_BYTES)}]), headers=host
+        "/listings",
+        json=listing_request(photos=[{"data": png_photo(MAX_PHOTO_BYTES)}]),
+        headers=host,
     )
 
     assert response.status_code == 201
@@ -228,7 +240,12 @@ def test_create_listing_with_invalid_max_guests_returns_422(client, host, max_gu
 
 @pytest.mark.parametrize(
     "field, value",
-    [("pricePerNight", "0.01"), ("pricePerNight", "1000000.00"), ("maxGuests", 1), ("maxGuests", 20)],
+    [
+        ("pricePerNight", "0.01"),
+        ("pricePerNight", "1000000.00"),
+        ("maxGuests", 1),
+        ("maxGuests", 20),
+    ],
 )
 def test_create_listing_with_boundary_values_returns_201(client, host, field, value):
     """FR-02; AC-02.2 (позитивна частина: 1, 20, 0,01 і 1 000 000,00 приймаються)."""
@@ -248,10 +265,29 @@ def test_create_listing_with_invalid_times_returns_422(client, host, field, valu
     assert_problem(response, 422, "VALIDATION_FAILED")
 
 
+def test_create_listing_with_null_description_returns_422(client, host):
+    """FR-02; AC-02.1 (опис необов'язковий, але за `ListingRequest` це рядок: null не приймається,
+    картка без поля `description` створюється)."""
+    response = client.post("/listings", json=listing_request(description=None), headers=host)
+
+    assert_problem(response, 422, "VALIDATION_FAILED")
+
+
+@pytest.mark.parametrize("value", [False, True, "0", 0.5])
+def test_create_listing_with_non_integer_turnover_returns_422(client, host, value):
+    """FR-02; AC-02.3 (перерва — лише ціле 0 або 1 за `ListingRequest`; false, true, "0" і 0.5
+    не приймаються)."""
+    response = client.post("/listings", json=listing_request(turnoverNights=value), headers=host)
+
+    assert_problem(response, 422, "VALIDATION_FAILED")
+
+
 def test_create_listing_with_jpeg_and_png_returns_201(client, host):
     """FR-02; AC-02.6 (фотографії у форматах JPEG і PNG приймаються)."""
     response = client.post(
-        "/listings", json=listing_request(photos=[{"data": JPEG_1X1}, {"data": PNG_1X1}]), headers=host
+        "/listings",
+        json=listing_request(photos=[{"data": JPEG_1X1}, {"data": PNG_1X1}]),
+        headers=host,
     )
 
     assert response.status_code == 201
@@ -260,7 +296,9 @@ def test_create_listing_with_jpeg_and_png_returns_201(client, host):
 
 def test_create_listing_with_unsupported_photo_format_returns_422(client, host):
     """FR-02; AC-02.6 (фотографія в іншому форматі — PHOTO_INVALID)."""
-    response = client.post("/listings", json=listing_request(photos=[{"data": GIF_1X1}]), headers=host)
+    response = client.post(
+        "/listings", json=listing_request(photos=[{"data": GIF_1X1}]), headers=host
+    )
 
     assert_problem(response, 422, "PHOTO_INVALID")
 
@@ -269,7 +307,9 @@ def test_create_listing_with_ten_max_size_photos_returns_201(client, host):
     """FR-02; AC-02.6 (картка з 10 фотографіями по 5 242 880 байтів зберігається)."""
     photo = png_photo(MAX_PHOTO_BYTES)
 
-    response = client.post("/listings", json=listing_request(photos=[{"data": photo}] * 10), headers=host)
+    response = client.post(
+        "/listings", json=listing_request(photos=[{"data": photo}] * 10), headers=host
+    )
 
     assert response.status_code == 201
     assert len(response.json()["photos"]) == 10
@@ -303,7 +343,8 @@ def test_create_listing_by_moderator_returns_403(client, moderator):
 
 
 def test_search_listings_returns_200(client, host):
-    """FR-05; AC-02.4 (щойно створене оголошення знаходиться пошуком), AC-05.2 (місто без урахування регістру)."""
+    """FR-05; AC-02.4 (щойно створене оголошення знаходиться пошуком), AC-05.2 (місто без урахування
+    регістру)."""
     city = unique_city()
     created = client.post("/listings", json=listing_request(city=city), headers=host).json()
 
@@ -331,20 +372,28 @@ def test_search_excludes_listing_with_confirmed_overlap(client, host, guest):
     """
     city = unique_city()
     listing = create_listing(client, host, city=city)
-    confirm(client, host, create_booking(client, guest, listing["id"], "2030-06-10", "2030-06-12")["id"])
+    confirm(
+        client, host, create_booking(client, guest, listing["id"], "2030-06-10", "2030-06-12")["id"]
+    )
 
     assert search_ids(client, city=city, checkIn="2030-06-11", checkOut="2030-06-13") == []
-    assert search_ids(client, city=city, checkIn="2030-06-12", checkOut="2030-06-14") == [listing["id"]]
+    assert search_ids(client, city=city, checkIn="2030-06-12", checkOut="2030-06-14") == [
+        listing["id"]
+    ]
 
 
 def test_search_excludes_listing_in_turnover(client, host, guest):
     """FR-05, FR-08; AC-05.3 (частково: ніч діапазону зайнята перервою бронювання в CONFIRMED)."""
     city = unique_city()
     listing = create_listing(client, host, city=city, turnoverNights=1)
-    confirm(client, host, create_booking(client, guest, listing["id"], "2030-06-10", "2030-06-12")["id"])
+    confirm(
+        client, host, create_booking(client, guest, listing["id"], "2030-06-10", "2030-06-12")["id"]
+    )
 
     assert search_ids(client, city=city, checkIn="2030-06-12", checkOut="2030-06-13") == []
-    assert search_ids(client, city=city, checkIn="2030-06-13", checkOut="2030-06-15") == [listing["id"]]
+    assert search_ids(client, city=city, checkIn="2030-06-13", checkOut="2030-06-15") == [
+        listing["id"]
+    ]
 
 
 def test_search_by_guests_count(client, host):
@@ -379,8 +428,11 @@ def test_get_listing_unknown_id_returns_404(client):
     assert response.json()["code"] == "NOT_FOUND"
 
 
-def test_get_unpublished_listing_visible_to_host_and_moderator_only(client, host, moderator, listing):
-    """FR-04; AC-04.6 (в описі getListing: без входу — лише PUBLISHED; власник бачить своє, модератор — будь-яке)."""
+def test_get_unpublished_listing_visible_to_host_and_moderator_only(
+    client, host, moderator, listing
+):
+    """FR-04; AC-04.6 (в описі getListing: без входу — лише PUBLISHED; власник бачить своє,
+    модератор — будь-яке)."""
     assert unpublish(client, moderator, listing["id"]).status_code == 200
 
     assert_problem(client.get(f"/listings/{listing['id']}"), 404, "NOT_FOUND")
@@ -394,7 +446,8 @@ def test_get_unpublished_listing_visible_to_host_and_moderator_only(client, host
 
 
 def test_replace_listing_returns_200(client, host, listing):
-    """FR-02; AC-02.3 (значення в межах приймаються), AC-02.6 (наявна фотографія лишається за id)."""
+    """FR-02; AC-02.3 (значення в межах приймаються), AC-02.6 (наявна фотографія лишається за
+    id)."""
     body = listing_request(
         description="Світла квартира біля Контрактової площі.",
         photos=[{"id": listing["photos"][0]["id"]}],
@@ -482,22 +535,36 @@ def test_unpublished_listing_hidden_from_search_and_booking(client, host, guest,
     assert unpublish(client, moderator, listing["id"]).status_code == 200
 
     assert search_ids(client, city=city) == []
-    body = {"listingId": listing["id"], "checkIn": "2030-06-10", "checkOut": "2030-06-12", "guestsCount": 2}
+    body = {
+        "listingId": listing["id"],
+        "checkIn": "2030-06-10",
+        "checkOut": "2030-06-12",
+        "guestsCount": 2,
+    }
     assert_problem(client.post("/bookings", json=body, headers=guest), 409, "LISTING_UNPUBLISHED")
 
 
-def test_unpublish_rejects_pending_and_keeps_confirmed(client, host, guest, other_guest, moderator, listing):
+def test_unpublish_rejects_pending_and_keeps_confirmed(
+    client, host, guest, other_guest, moderator, listing
+):
     """FR-04; AC-04.3 (частково: PENDING → REJECTED, підтверджене лишається в CONFIRMED).
 
     Операція повернення (lab5-scope.md, п. 5) і перехід у COMPLETED (п. 10) не перевіряються.
     """
     pending = create_booking(client, guest, listing["id"], "2030-06-10", "2030-06-12")
-    confirmed = confirm(client, host, create_booking(client, other_guest, listing["id"], "2030-06-20", "2030-06-22")["id"])
+    confirmed = confirm(
+        client,
+        host,
+        create_booking(client, other_guest, listing["id"], "2030-06-20", "2030-06-22")["id"],
+    )
 
     assert unpublish(client, moderator, listing["id"]).status_code == 200
 
     assert client.get(f"/bookings/{pending['id']}", headers=guest).json()["status"] == "REJECTED"
-    assert client.get(f"/bookings/{confirmed['id']}", headers=other_guest).json()["status"] == "CONFIRMED"
+    assert (
+        client.get(f"/bookings/{confirmed['id']}", headers=other_guest).json()["status"]
+        == "CONFIRMED"
+    )
 
 
 def test_unpublish_unpublished_listing_returns_409(client, moderator, listing):
@@ -532,7 +599,9 @@ def test_publish_listing_by_moderator_returns_200(client, moderator, listing):
     assert unpublish(client, moderator, listing["id"]).status_code == 200
 
     response = client.post(
-        f"/listings/{listing['id']}/publish", json={"reason": "Власник замінив фотографії."}, headers=moderator
+        f"/listings/{listing['id']}/publish",
+        json={"reason": "Власник замінив фотографії."},
+        headers=moderator,
     )
 
     assert response.status_code == 200
@@ -543,7 +612,9 @@ def test_publish_listing_by_host_returns_403(client, host, moderator, listing):
     """FR-04; AC-04.6 (власник не може сам повернути в публікацію оголошення, зняте модератором)."""
     assert unpublish(client, moderator, listing["id"]).status_code == 200
 
-    response = client.post(f"/listings/{listing['id']}/publish", json={"reason": "Виправив."}, headers=host)
+    response = client.post(
+        f"/listings/{listing['id']}/publish", json={"reason": "Виправив."}, headers=host
+    )
 
     assert_problem(response, 403, "FORBIDDEN")
     assert client.get(f"/listings/{listing['id']}", headers=host).json()["status"] == "UNPUBLISHED"
@@ -551,7 +622,9 @@ def test_publish_listing_by_host_returns_403(client, host, moderator, listing):
 
 def test_publish_published_listing_returns_409(client, moderator, listing):
     """FR-04; AC — немає: оголошення вже опубліковане — 409 STATE_CONFLICT (publishListing)."""
-    response = client.post(f"/listings/{listing['id']}/publish", json={"reason": "Підстава."}, headers=moderator)
+    response = client.post(
+        f"/listings/{listing['id']}/publish", json={"reason": "Підстава."}, headers=moderator
+    )
 
     assert_problem(response, 409, "STATE_CONFLICT")
 

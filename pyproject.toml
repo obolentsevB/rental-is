@@ -1,0 +1,24 @@
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+# Імена полів і параметрів задає контракт api/openapi.yaml (camelCase). Перейменування
+# змінило б назви в API або потребувало б alias для кожного поля й параметра.
+"src/schemas.py" = ["N815"]
+# D301: docstring обробника починається з \f (form feed), тому FastAPI не показує його в OpenAPI.
+# Сирий рядок r""" цей символ не створює.
+"src/routers/*.py" = ["N803", "D301"]
+# Фікстури pytest імпортовано з tests/test_listings.py, а їхні імена повторюються в аргументах
+# тестів. Так pytest і підставляє фікстури, тому F811 тут хибне спрацювання.
+"tests/test_listings_pagination.py" = ["F811"]
+
+[tool.ruff.format]
+quote-style = "double"
