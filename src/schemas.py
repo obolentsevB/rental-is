@@ -67,6 +67,27 @@ class ListingRequest(RequestModel):
             raise ValueError("від 0.01 до 1000000.00 включно")
         return value
 
+    @field_validator("turnoverNights", mode="before")
+    @classmethod
+    def turnover_is_integer(cls, value: object) -> object:
+        """Відхиляє булеві значення технологічної перерви (FR-02, AC-02.3).
+
+        `Literal[0, 1]` сам приймає `false` і `true` як 0 і 1, бо в Python `bool` — підтип `int`.
+        Контракт допускає лише цілі 0 і 1.
+
+        Args:
+            value: Значення з тіла запиту до перевірки `Literal`.
+
+        Returns:
+            Незмінене значення для подальшої перевірки.
+
+        Raises:
+            ValueError: Якщо значення булеве; клієнт отримує VALIDATION_FAILED.
+        """
+        if isinstance(value, bool):
+            raise ValueError("має бути ціле число 0 або 1")
+        return value
+
 
 class ModerationReasonRequest(RequestModel):
     """Підстава рішення модератора (publishListing, unpublishListing, FR-04)."""
