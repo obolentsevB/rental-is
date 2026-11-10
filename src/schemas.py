@@ -67,6 +67,27 @@ class ListingRequest(RequestModel):
             raise ValueError("від 0.01 до 1000000.00 включно")
         return value
 
+    @field_validator("description", mode="before")
+    @classmethod
+    def description_not_null(cls, value: object) -> object:
+        """Відхиляє явний null в описі (FR-02, AC-02.1).
+
+        Опис необов'язковий: картка без поля `description` приймається, бо значення за
+        замовчуванням не валідується. За контрактом поле має тип лише `string`.
+
+        Args:
+            value: Значення з тіла запиту.
+
+        Returns:
+            Незмінене значення для подальшої перевірки.
+
+        Raises:
+            ValueError: Якщо передано null; клієнт отримує VALIDATION_FAILED.
+        """
+        if value is None:
+            raise ValueError("опис має бути рядком; щоб не задавати опис, не передавайте поле")
+        return value
+
     @field_validator("turnoverNights", mode="before")
     @classmethod
     def turnover_is_integer(cls, value: object) -> object:
