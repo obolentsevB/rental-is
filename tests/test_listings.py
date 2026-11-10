@@ -265,6 +265,15 @@ def test_create_listing_with_invalid_times_returns_422(client, host, field, valu
     assert_problem(response, 422, "VALIDATION_FAILED")
 
 
+@pytest.mark.parametrize("value", [False, True, "0", 0.5])
+def test_create_listing_with_non_integer_turnover_returns_422(client, host, value):
+    """FR-02; AC-02.3 (перерва — лише ціле 0 або 1 за `ListingRequest`; false, true, "0" і 0.5
+    не приймаються)."""
+    response = client.post("/listings", json=listing_request(turnoverNights=value), headers=host)
+
+    assert_problem(response, 422, "VALIDATION_FAILED")
+
+
 def test_create_listing_with_jpeg_and_png_returns_201(client, host):
     """FR-02; AC-02.6 (фотографії у форматах JPEG і PNG приймаються)."""
     response = client.post(
