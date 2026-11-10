@@ -20,3 +20,5 @@ Thumbs.db
 
 !logs/api-*.log
 !logs/test-runs/*.log.schemathesis/
+.schemathesis/
+.claude/
