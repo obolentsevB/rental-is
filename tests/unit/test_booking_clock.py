@@ -3,6 +3,9 @@
 Годинник сервісного шару підмінено (фікстура `clock`); дії виконуються через API,
 очікування — зі spec/srs.md і spec/bdd/booking.feature. Час — Europe/Kyiv.
 """
+import uuid
+
+from src import repository
 from tests.unit.conftest import assert_problem, book, request_booking
 
 
@@ -136,3 +139,45 @@ def test_cancel_completed_booking_is_refused(client, clock, host, guest, make_li
     assert client.get(f"/bookings/{b['id']}", headers=guest).json()["status"] == "COMPLETED"
 
     assert_problem(client.post(f"/bookings/{b['id']}/cancel", headers=guest), 409, "STATE_CONFLICT")
+
+
+def test_search_excludes_listing_with_completed_booking(client, clock, host, guest, make_listing):
+    """FR-05, FR-08; AC-05.3 (частина про COMPLETED: ніч зайнята завершеним бронюванням).
+
+    Закриті ночі не перевіряються (lab5-scope.md, п. 4).
+    """
+    city = f"Місто-{uuid.uuid4().hex[:8]}"
+    listing = make_listing(city=city)
+    b = book(client, guest, listing["id"], "2027-06-10", "2027-06-12")
+    assert client.post(f"/bookings/{b['id']}/confirm", headers=host).status_code == 200
+
+    clock.set("2027-06-12 11:00")
+    assert client.get(f"/bookings/{b['id']}", headers=guest).json()["status"] == "COMPLETED"
+
+    def found(check_in, check_out):
+        response = client.get("/listings", params={"city": city, "checkIn": check_in, "checkOut": check_out})
+        assert response.status_code == 200
+        return [item["id"] for item in response.json()]
+
+    assert found("2027-06-11", "2027-06-13") == []
+    assert found("2027-06-12", "2027-06-14") == [listing["id"]]
+
+
+def test_refund_scale_uses_check_in_time_fixed_at_creation(client, clock, host, guest, make_listing):
+    """FR-06, FR-13; AC-06.4 (шкала повернення рахується від зафіксованого часу заїзду).
+
+    Час заїзду змінено з 14:00 на 16:00. За 71 год 59 хв до зафіксованого моменту p = 0%;
+    від нового часу було б 73 год 59 хв і p = 50%. p в API не виходить (lab5-scope.md, п. 6),
+    тому читається службове поле запису в сховищі.
+    """
+    listing = make_listing()
+    b = book(client, guest, listing["id"], "2027-06-10", "2027-06-12")
+    assert client.post(f"/bookings/{b['id']}/confirm", headers=host).status_code == 200
+    card = {key: listing[key] for key in ("title", "city", "address", "maxGuests", "pricePerNight", "checkOutTime")}
+    changed = {**card, "photos": [{"id": listing["photos"][0]["id"]}], "checkInTime": "16:00", "turnoverNights": 0}
+    assert client.put(f"/listings/{listing['id']}", json=changed, headers=host).status_code == 200
+
+    clock.set("2027-06-07 14:01")
+    assert client.post(f"/bookings/{b['id']}/cancel", headers=guest).status_code == 200
+
+    assert repository.get_booking(b["id"])["_refundShare"] == 0
