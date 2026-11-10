@@ -6,21 +6,24 @@ Users/Auth не реалізуються: тести засівають схов
 """
 from typing import Annotated
 
-from fastapi import Depends, Header
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.errors import ProblemError
 
 TOKENS: dict[str, dict] = {}  # token → {"userId": str, "role": str}
 
+# auto_error=False: відмову формує require_user у форматі ProblemError.
+bearer_scheme = HTTPBearer(auto_error=False, scheme_name="bearerAuth")
 
-def optional_user(authorization: Annotated[str | None, Header()] = None) -> dict | None:
+
+def optional_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> dict | None:
     """Користувач за bearer-токеном або None, якщо токена немає чи він невідомий."""
-    if not authorization:
+    if credentials is None:
         return None
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer":
-        return None
-    return TOKENS.get(token.strip())
+    return TOKENS.get(credentials.credentials.strip())
 
 
 def require_user(user: Annotated[dict | None, Depends(optional_user)]) -> dict:

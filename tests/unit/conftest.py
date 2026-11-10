@@ -79,10 +79,10 @@ def other_guest(auth):
 def make_listing(client, host):
     """Житло «Поділ» із передумови booking.feature: заїзд 14:00, виїзд 11:00, до 4 осіб."""
 
-    def make(turnover=0):
+    def make(turnover=0, city="Київ"):
         body = {
             "title": "Поділ",
-            "city": "Київ",
+            "city": city,
             "address": "вул. Сагайдачного, 1",
             "maxGuests": 4,
             "pricePerNight": "1234.56",

@@ -354,10 +354,17 @@ paths:
         Діапазон дат задається парою `checkIn` і `checkOut` і відбирає житло,
         що проходить повну перевірку доступності (FR-08) з технологічною
         перервою, чинною на момент пошуку. Інших фільтрів немає.
+
+        **Пагінація (з версії 1.1.0, FR-ADD-02).** Повертається не більше
+        `limit` елементів, за замовчуванням 20, починаючи з позиції `offset`.
+        Запит без параметрів пагінації повертає лише перші 20 результатів;
+        загальну кількість знайденого містить заголовок `X-Total-Count`.
+        Порядок: без `sort` — за моментом створення оголошення, від ранішого;
+        з `sort` — за ключем сортування, рівні значення — за моментом створення.
       tags: [Listings]
       security: []
-      x-req-ids: [FR-05, FR-ADD-01]
-      x-acceptance-criteria: [AC-05.1, AC-05.2, AC-05.3, AC-05.4, AC-05.5, AC-ADD-01.1, AC-ADD-01.2, AC-ADD-01.3, AC-ADD-01.4, AC-ADD-01.5, AC-ADD-01.6]
+      x-req-ids: [FR-05, FR-ADD-02]
+      x-acceptance-criteria: [AC-05.1, AC-05.2, AC-05.3, AC-05.4, AC-05.5, AC-ADD-02.1, AC-ADD-02.2, AC-ADD-02.3, AC-ADD-02.4, AC-ADD-02.5, AC-ADD-02.6, AC-ADD-02.7]
       x-roles: [anonymous, guest, host, moderator]
       parameters:
         - name: city
@@ -406,7 +413,7 @@ paths:
             enum: [price_asc, price_desc, rating_desc]
         - name: limit
           in: query
-          description: Найбільша кількість елементів у відповіді (FR-ADD-01, spec/addendum-01.md).
+          description: Найбільша кількість елементів у відповіді (FR-ADD-02, spec/addenda/ADD-02.md).
           schema:
             type: integer
             minimum: 1
@@ -414,7 +421,7 @@ paths:
             default: 20
         - name: offset
           in: query
-          description: Скільки перших елементів упорядкованого результату пропустити (FR-ADD-01).
+          description: Скільки перших елементів упорядкованого результату пропустити (FR-ADD-02).
           schema:
             type: integer
             minimum: 0
@@ -424,9 +431,10 @@ paths:
           description: Житло, що відповідає фільтрам
           headers:
             X-Total-Count:
-              description: Загальна кількість знайденого після фільтрів, до застосування limit і offset (FR-ADD-01).
+              description: Загальна кількість знайденого після фільтрів, до застосування limit і offset (FR-ADD-02).
               schema:
                 type: integer
+                minimum: 0
           content:
             application/json:
               schema:

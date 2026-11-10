@@ -95,7 +95,11 @@ def search(
     price_max: str | None,
     sort: str | None,
 ) -> list[dict]:
-    """FR-05: житло в стані Published за необов'язковими фільтрами."""
+    """FR-05: житло в стані Published за необов'язковими фільтрами.
+
+    Порядок (FR-ADD-02): без `sort` і для рівних значень ключа — за моментом створення.
+    Його дають порядок вставки у сховищі та стабільність `list.sort`.
+    """
     _check_date_range(check_in, check_out)
 
     def matches(record: dict) -> bool:
@@ -114,6 +118,11 @@ def search(
     elif sort == "rating_desc":
         results.sort(key=lambda record: (record["averageRating"] is None, -(record["averageRating"] or 0)))
     return results
+
+
+def paginate(items: list[dict], limit: int, offset: int) -> tuple[list[dict], int]:
+    """FR-ADD-02: сторінка впорядкованого результату та загальна кількість до застосування limit і offset."""
+    return items[offset:offset + limit], len(items)
 
 
 def create(owner: dict, body: ListingRequest, base_url: str) -> dict:

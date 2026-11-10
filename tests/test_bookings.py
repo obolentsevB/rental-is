@@ -313,6 +313,45 @@ def test_fr07_checks_order(
     assert_problem(response, status, code)
 
 
+@pytest.mark.parametrize(
+    "actor, check_in, check_out, guests_count, status, code",
+    [
+        ("guest", "2030-06-10", "2030-06-10", 2, 422, "MIN_NIGHTS"),
+        ("host", "2030-06-10", "2030-06-12", 2, 403, "OWN_LISTING"),
+        ("guest", "2030-06-10", "2030-06-12", 5, 422, "GUESTS_OUT_OF_RANGE"),
+        ("guest", "2030-06-10", "2030-06-12", 2, 409, "LISTING_UNPUBLISHED"),
+        ("guest", "2020-06-10", "2020-06-12", 2, 422, "CHECKIN_TOO_SOON"),
+        ("guest", "2030-06-11", "2030-06-13", 2, 409, "DATES_UNAVAILABLE"),
+    ],
+    ids=["MIN_NIGHTS", "OWN_LISTING", "GUESTS_OUT_OF_RANGE", "LISTING_UNPUBLISHED", "CHECKIN_TOO_SOON", "DATES_UNAVAILABLE"],
+)
+def test_refused_request_creates_no_booking(
+    client, host, guest, other_guest, moderator, listing, actor, check_in, check_out, guests_count, status, code
+):
+    """FR-07; AC-07.1 (після відмови за підставами 1–6 бронювання не з'являється).
+
+    Підстава 0 (ACCOUNT_BLOCKED) не моделюється, платіжні операції не створюються (lab5-scope.md, пп. 5, 11).
+    """
+    if code == "LISTING_UNPUBLISHED":
+        response = client.post(f"/listings/{listing['id']}/unpublish", json={"reason": "Перевірка."}, headers=moderator)
+        assert response.status_code == 200
+    if code == "DATES_UNAVAILABLE":
+        confirm(client, host, book(client, other_guest, listing["id"], "2030-06-10", "2030-06-12")["id"])
+
+    def bookings_of_listing():
+        return sorted(item["id"] for item in client.get("/bookings", params={"role": "owner"}, headers=host).json())
+
+    before = bookings_of_listing()
+    headers = host if actor == "host" else guest
+
+    response = client.post(
+        "/bookings", json=booking_request(listing["id"], check_in, check_out, guests_count), headers=headers
+    )
+
+    assert_problem(response, status, code)
+    assert bookings_of_listing() == before
+
+
 # --- createBooking: доступність (FR-08) ------------------------------------------
 
 
