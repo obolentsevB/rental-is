@@ -18,18 +18,26 @@ BookingListRole = Literal["guest", "owner"]
 
 
 class RequestModel(BaseModel):
+    """Базова модель тіла запиту: невідомі поля дають VALIDATION_FAILED."""
+
     model_config = ConfigDict(extra="forbid")
 
 
 class NewPhoto(RequestModel):
+    """Нова фотографія картки житла в base64 (FR-02)."""
+
     data: str
 
 
 class ExistingPhoto(RequestModel):
+    """Наявна фотографія картки житла за ідентифікатором (FR-02)."""
+
     id: uuid.UUID
 
 
 class ListingRequest(RequestModel):
+    """Картка житла для createListing і replaceListing (FR-02)."""
+
     title: Annotated[str, Field(min_length=1, max_length=100)]
     description: Annotated[str, Field(max_length=2000)] | None = None
     city: NonEmptyStr
@@ -44,12 +52,25 @@ class ListingRequest(RequestModel):
     @field_validator("pricePerNight")
     @classmethod
     def price_in_range(cls, value: str) -> str:
+        """Перевіряє межі ціни за ніч (FR-02).
+
+        Args:
+            value: Ціна, що вже відповідає `MONEY_PATTERN`.
+
+        Returns:
+            Незмінене значення.
+
+        Raises:
+            ValueError: Якщо ціна поза межами 0.01–1000000.00; клієнт отримує VALIDATION_FAILED.
+        """
         if not Decimal("0.01") <= Decimal(value) <= Decimal("1000000.00"):
             raise ValueError("від 0.01 до 1000000.00 включно")
         return value
 
 
 class ModerationReasonRequest(RequestModel):
+    """Підстава рішення модератора (publishListing, unpublishListing, FR-04)."""
+
     reason: NonEmptyStr
 
 

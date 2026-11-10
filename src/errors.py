@@ -33,15 +33,40 @@ class ProblemError(Exception):
     """Відмова з кодом зі схеми Problem; `extra` — додаткові поля відповіді."""
 
     def __init__(self, code: str, detail: str | None = None, **extra):
+        """Зберігає дані відмови для `handle_problem`.
+
+        Args:
+            code: Ключ `PROBLEMS`, що визначає HTTP-статус і заголовок.
+            detail: Пояснення для клієнта; якщо None, поля `detail` у відповіді немає.
+            **extra: Додаткові поля тіла, наприклад `conflictingBookingIds`.
+        """
         super().__init__(detail)
         self.code, self.detail, self.extra = code, detail, extra
 
 
 def not_found() -> ProblemError:
+    """Створює однакову відмову для відсутнього й недоступного ресурсу.
+
+    Returns:
+        Виняток NOT_FOUND, який має підняти викликач.
+    """
     return ProblemError("NOT_FOUND", NOT_FOUND_DETAIL)
 
 
 def problem_response(code: str, detail: str | None = None, **extra) -> JSONResponse:
+    """Формує відповідь за схемою Problem (RFC 9457) з новим `correlationId`.
+
+    Args:
+        code: Ключ `PROBLEMS`.
+        detail: Пояснення для клієнта або None.
+        **extra: Додаткові поля тіла.
+
+    Returns:
+        Відповідь `application/problem+json` зі статусом коду.
+
+    Raises:
+        KeyError: Якщо коду немає в `PROBLEMS`.
+    """
     status, title = PROBLEMS[code]
     body = {
         "type": f"urn:rental-is:problem:{code.lower().replace('_', '-')}",
@@ -57,10 +82,28 @@ def problem_response(code: str, detail: str | None = None, **extra) -> JSONRespo
 
 
 async def handle_problem(request: Request, exc: ProblemError):
+    """Перетворює `ProblemError` на відповідь Problem.
+
+    Args:
+        request: Поточний запит, не використовується.
+        exc: Відмова сервісу або залежності.
+
+    Returns:
+        Відповідь Problem із кодом відмови.
+    """
     return problem_response(exc.code, exc.detail, **exc.extra)
 
 
 async def handle_validation(request: Request, exc: RequestValidationError):
+    """Перетворює помилку валідації на VALIDATION_FAILED.
+
+    Args:
+        request: Поточний запит, не використовується.
+        exc: Помилка валідації FastAPI; у відповідь іде лише перше порушення.
+
+    Returns:
+        Відповідь Problem зі статусом 422 і деталлю у форматі «поле: повідомлення».
+    """
     error = exc.errors()[0]
     field = ".".join(str(part) for part in error["loc"][1:]) or str(error["loc"][0])
     return problem_response("VALIDATION_FAILED", f"{field}: {error['msg']}")
@@ -71,6 +114,12 @@ def allowed_methods(request: Request) -> str:
 
     `app.routes` містить підключені роутери лише як один лінивий елемент без методів,
     тому їхні маршрути беруться з самих роутерів (`app.state.routers`).
+
+    Args:
+        request: Запит, для шляху якого шукають методи.
+
+    Returns:
+        Відсортовані назви методів через кому.
     """
     app = request.app
     routes = [*app.routes, *(route for router in app.state.routers for route in router.routes)]
@@ -83,6 +132,16 @@ def allowed_methods(request: Request) -> str:
 
 
 async def handle_http(request: Request, exc: StarletteHTTPException):
+    """Узгоджує HTTP-помилки Starlette з контрактом.
+
+    Args:
+        request: Поточний запит; потрібен для заголовка Allow.
+        exc: Помилка фреймворку.
+
+    Returns:
+        Відповідь Problem NOT_FOUND для 404 і VALIDATION_FAILED для 400. Відповідь 405 має
+        заголовок Allow, решта статусів передається без змін; ці відповіді не мають форми Problem.
+    """
     if exc.status_code == 404:
         return problem_response("NOT_FOUND", NOT_FOUND_DETAIL)
     if exc.status_code == 400:
@@ -96,10 +155,25 @@ async def handle_http(request: Request, exc: StarletteHTTPException):
 
 
 async def handle_internal(request: Request, exc: Exception):
+    """Приховує від клієнта деталі непередбаченого збою.
+
+    Args:
+        request: Поточний запит, не використовується.
+        exc: Необроблений виняток.
+
+    Returns:
+        Відповідь Problem INTERNAL_ERROR зі статусом 500.
+    """
     return problem_response("INTERNAL_ERROR")
 
 
 def register_error_handlers(app: FastAPI, routers: Sequence[APIRouter]) -> None:
+    """Підключає обробники помилок до застосунку.
+
+    Args:
+        app: Застосунок FastAPI.
+        routers: Роутери застосунку; `allowed_methods` бере з них маршрути.
+    """
     app.state.routers = routers
     app.add_exception_handler(ProblemError, handle_problem)
     app.add_exception_handler(RequestValidationError, handle_validation)

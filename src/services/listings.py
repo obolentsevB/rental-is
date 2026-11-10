@@ -75,7 +75,14 @@ def _can_see(record: dict, user: dict | None) -> bool:
 
 
 def to_api(record: dict) -> dict:
-    """Представлення за схемою Listing (без службових полів сховища)."""
+    """Готує запис до відповіді за схемою Listing.
+
+    Args:
+        record: Запис сховища.
+
+    Returns:
+        Новий словник без службових полів `hostId` і `unpublishedBy`.
+    """
     return {key: value for key, value in record.items() if key not in ("hostId", "unpublishedBy")}
 
 
@@ -102,10 +109,25 @@ def search(
     price_max: str | None,
     sort: str | None,
 ) -> list[dict]:
-    """FR-05: житло в стані Published за необов'язковими фільтрами.
+    """Шукає житло в стані Published за необов'язковими фільтрами (FR-05).
 
     Порядок (FR-ADD-02): без `sort` і для рівних значень ключа — за моментом створення.
     Його дають порядок вставки у сховищі та стабільність `list.sort`.
+
+    Args:
+        city: Місто, порівнюється без урахування регістру.
+        check_in: Дата заїзду, задається разом із `check_out`.
+        check_out: Дата виїзду.
+        guests_count: Кількість осіб.
+        price_min: Нижня межа ціни за ніч.
+        price_max: Верхня межа ціни за ніч.
+        sort: price_asc, price_desc, rating_desc або None.
+
+    Returns:
+        Упорядковані записи житла.
+
+    Raises:
+        ProblemError: VALIDATION_FAILED, якщо задано лише одну дату або діапазон порожній.
     """
     _check_date_range(check_in, check_out)
 
@@ -130,15 +152,33 @@ def search(
 
 
 def paginate(items: list[dict], limit: int, offset: int) -> tuple[list[dict], int]:
-    """FR-ADD-02: сторінка впорядкованого результату та загальна кількість.
+    """Вирізає сторінку впорядкованого результату (FR-ADD-02).
 
-    Загальну кількість рахують до застосування limit і offset.
+    Args:
+        items: Увесь упорядкований результат.
+        limit: Розмір сторінки.
+        offset: Кількість пропущених записів.
+
+    Returns:
+        Сторінку й загальну кількість записів до застосування `limit` і `offset`.
     """
     return items[offset : offset + limit], len(items)
 
 
 def create(host: dict, body: ListingRequest, base_url: str) -> dict:
-    """FR-02: нове оголошення одразу в стані Published."""
+    """Створює оголошення одразу в стані Published (FR-02).
+
+    Args:
+        host: Користувач, що стає власником житла.
+        body: Картка житла.
+        base_url: Базова адреса для URL фотографій, зі скісною рискою в кінці.
+
+    Returns:
+        Збережений запис житла.
+
+    Raises:
+        ProblemError: PHOTO_INVALID за порушення вимог до фотографій.
+    """
     photos = _resolve_photos(body.photos, base_url)
     return repository.save_listing(
         {
@@ -153,6 +193,20 @@ def create(host: dict, body: ListingRequest, base_url: str) -> dict:
 
 
 def get(listing_id: str, user: dict | None) -> dict:
+    """Повертає житло, якщо воно видиме користувачу (getListing, AC-04.6).
+
+    Опубліковане житло бачать усі, зняте — лише його власник і модератор.
+
+    Args:
+        listing_id: Ідентифікатор житла.
+        user: Користувач або None для незареєстрованого відвідувача.
+
+    Returns:
+        Запис житла.
+
+    Raises:
+        ProblemError: NOT_FOUND, якщо житла немає або воно недоступне.
+    """
     record = repository.get_listing(listing_id)
     if record is None or not _can_see(record, user):
         raise not_found()
@@ -160,9 +214,22 @@ def get(listing_id: str, user: dict | None) -> dict:
 
 
 def replace(listing_id: str, user: dict, body: ListingRequest, base_url: str) -> dict:
-    """FR-02: повна заміна картки власником.
+    """Повністю замінює картку власником (FR-02).
 
     Відсутні необов'язкові поля скидаються до значень за замовчуванням.
+
+    Args:
+        listing_id: Ідентифікатор житла.
+        user: Користувач, що редагує картку.
+        body: Нова картка житла.
+        base_url: Базова адреса для URL нових фотографій.
+
+    Returns:
+        Оновлений запис житла.
+
+    Raises:
+        ProblemError: NOT_FOUND для недоступного житла, FORBIDDEN для не власника, PHOTO_INVALID
+            за порушення вимог до фотографій.
     """
     record = get(listing_id, user)
     if record["hostId"] != user["userId"]:
@@ -174,7 +241,20 @@ def replace(listing_id: str, user: dict, body: ListingRequest, base_url: str) ->
 
 
 def unpublish(listing_id: str, moderator: dict) -> dict:
-    """FR-04: зняття модератором; запити в PENDING переходять у REJECTED."""
+    """Знімає житло з публікації рішенням модератора (FR-04).
+
+    Запити в PENDING на це житло переходять у REJECTED.
+
+    Args:
+        listing_id: Ідентифікатор житла.
+        moderator: Модератор.
+
+    Returns:
+        Оновлений запис житла.
+
+    Raises:
+        ProblemError: NOT_FOUND, якщо житла немає, STATE_CONFLICT, якщо воно вже зняте.
+    """
     record = get(listing_id, moderator)
     if record["status"] == "UNPUBLISHED":
         raise ProblemError("STATE_CONFLICT", "Оголошення вже зняте з публікації.")
@@ -185,7 +265,19 @@ def unpublish(listing_id: str, moderator: dict) -> dict:
 
 
 def publish(listing_id: str, moderator: dict) -> dict:
-    """FR-04: повернення в публікацію лише оголошення, знятого модератором."""
+    """Повертає в публікацію лише житло, зняте модератором (FR-04).
+
+    Args:
+        listing_id: Ідентифікатор житла.
+        moderator: Модератор.
+
+    Returns:
+        Оновлений запис житла.
+
+    Raises:
+        ProblemError: NOT_FOUND, якщо житла немає, STATE_CONFLICT, якщо воно вже опубліковане
+            або зняте не модератором.
+    """
     record = get(listing_id, moderator)
     if record["status"] == "PUBLISHED":
         raise ProblemError("STATE_CONFLICT", "Оголошення вже опубліковане.")

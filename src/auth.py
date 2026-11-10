@@ -21,25 +21,69 @@ bearer_scheme = HTTPBearer(auto_error=False, scheme_name="bearerAuth")
 def optional_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> dict | None:
-    """Користувач за bearer-токеном або None, якщо токена немає чи він невідомий."""
+    """Визначає користувача за bearer-токеном (lab5-scope.md, п. 11).
+
+    Для операцій, доступних без входу: невідомий токен означає незареєстрованого відвідувача.
+
+    Args:
+        credentials: Дані заголовка Authorization або None, якщо заголовка немає.
+
+    Returns:
+        Словник з `userId` і `role` або None, якщо токена немає чи він невідомий.
+    """
     if credentials is None:
         return None
     return TOKENS.get(credentials.credentials.strip())
 
 
 def require_user(user: Annotated[dict | None, Depends(optional_user)]) -> dict:
+    """Вимагає вхід у систему для операції.
+
+    Args:
+        user: Результат `optional_user`.
+
+    Returns:
+        Словник користувача.
+
+    Raises:
+        ProblemError: UNAUTHENTICATED, якщо користувача не визначено.
+    """
     if user is None:
         raise ProblemError("UNAUTHENTICATED", "Дія потребує входу в систему.")
     return user
 
 
 def require_non_moderator(user: Annotated[dict, Depends(require_user)]) -> dict:
+    """Забороняє операцію модератору: він не суміщає інші ролі.
+
+    Застосовується в createListing, createBooking і listBookings.
+
+    Args:
+        user: Результат `require_user`.
+
+    Returns:
+        Словник користувача.
+
+    Raises:
+        ProblemError: FORBIDDEN для ролі MODERATOR.
+    """
     if user["role"] == "MODERATOR":
         raise ProblemError("FORBIDDEN", "Дія не дозволена цій ролі.")
     return user
 
 
 def require_moderator(user: Annotated[dict, Depends(require_user)]) -> dict:
+    """Дозволяє операцію лише модератору (publishListing, unpublishListing).
+
+    Args:
+        user: Результат `require_user`.
+
+    Returns:
+        Словник користувача.
+
+    Raises:
+        ProblemError: FORBIDDEN для будь-якої іншої ролі.
+    """
     if user["role"] != "MODERATOR":
         raise ProblemError("FORBIDDEN", "Дія доступна лише модератору.")
     return user

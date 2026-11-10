@@ -30,6 +30,13 @@ LOCK = threading.RLock()  # NFR-01: дії над бронюваннями ви�
 
 
 def now() -> datetime:
+    """Повертає поточний момент у часовому поясі Europe/Kyiv.
+
+    Єдине джерело часу сервісу: модульні тести підміняють цю функцію (lab5-scope.md, п. 10).
+
+    Returns:
+        Поточний момент із часовим поясом.
+    """
     return datetime.now(KYIV)
 
 
@@ -37,6 +44,15 @@ def now() -> datetime:
 
 
 def moment(night: date, clock_time: str) -> datetime:
+    """Поєднує дату з часом доби в момент заїзду чи виїзду.
+
+    Args:
+        night: Дата заїзду або виїзду.
+        clock_time: Час доби у форматі `ГГ:ХХ`.
+
+    Returns:
+        Момент у часовому поясі Europe/Kyiv.
+    """
     hours, minutes = map(int, clock_time.split(":"))
     return datetime.combine(night, time(hours, minutes), tzinfo=KYIV)
 
@@ -48,7 +64,16 @@ def _iso(value: datetime) -> str:
 def costs(
     nights: int, price_per_night: Decimal, commission_rate: Decimal
 ) -> tuple[Decimal, Decimal, Decimal]:
-    """FR-15: вартість проживання, комісія (вниз до 0,01), передоплата."""
+    """Обчислює суми запиту на бронювання (FR-15).
+
+    Args:
+        nights: Кількість ночей.
+        price_per_night: Ціна за ніч.
+        commission_rate: Відсоток комісії.
+
+    Returns:
+        Вартість проживання, комісію, округлену вниз до 0,01, і передоплату.
+    """
     accommodation_cost = nights * price_per_night
     commission = (accommodation_cost * commission_rate / 100).quantize(CENT, rounding=ROUND_FLOOR)
     return accommodation_cost, commission, accommodation_cost + commission
@@ -57,7 +82,17 @@ def costs(
 def refund_share(
     cancelled_by: str, previous_status: str, cancelled_at: datetime, check_in_at: datetime
 ) -> int:
-    """FR-13: частка повернення p, %, за ініціатором і попереднім статусом."""
+    """Визначає частку повернення p (FR-13).
+
+    Args:
+        cancelled_by: Ініціатор скасування; шкала діє лише для GUEST.
+        previous_status: Статус бронювання до скасування.
+        cancelled_at: Момент скасування.
+        check_in_at: Момент заїзду.
+
+    Returns:
+        Частку у відсотках: 100, 50 або 0.
+    """
     if cancelled_by != "GUEST" or previous_status == "PENDING":
         return 100
     hours_left = check_in_at - cancelled_at
@@ -69,7 +104,18 @@ def refund_share(
 
 
 def refund(refund_rate: int, accommodation_cost: Decimal, commission: Decimal) -> Decimal:
-    """FR-15: повернення = p × вартість + p × комісія, кожен доданок угору до 0,01."""
+    """Обчислює суму повернення (FR-15).
+
+    Поки не викликається: платіжні операції поза обсягом Лаб 5 (lab5-scope.md, п. 5).
+
+    Args:
+        refund_rate: Частка повернення p у відсотках.
+        accommodation_cost: Вартість проживання.
+        commission: Комісія.
+
+    Returns:
+        Суму двох доданків, кожен округлено вгору до 0,01.
+    """
 
     def part(amount: Decimal) -> Decimal:
         return (amount * refund_rate / 100).quantize(CENT, rounding=ROUND_CEILING)
@@ -82,7 +128,17 @@ def _stay(booking: dict) -> tuple[date, date]:
 
 
 def overlaps(check_in: date, check_out: date, turnover_nights: int, other: dict) -> bool:
-    """Умова (2) FR-08 з перервою запиту `turnover_nights` і перервою, зафіксованою в `other`."""
+    """Перевіряє умову конфлікту (2) FR-08 для двох діапазонів.
+
+    Args:
+        check_in: Дата заїзду перевірюваного діапазону.
+        check_out: Дата виїзду перевірюваного діапазону.
+        turnover_nights: Перерва N перевірюваного діапазону.
+        other: Запис бронювання; його перерва береться із самого запису.
+
+    Returns:
+        True, якщо діапазони конфліктують.
+    """
     other_in, other_out = _stay(other)
     return check_in < other_out + timedelta(
         days=other["turnoverNights"]
@@ -93,7 +149,14 @@ def overlaps(check_in: date, check_out: date, turnover_nights: int, other: dict)
 
 
 def refresh(current: datetime) -> None:
-    """Автоматичне відхилення після строку рішення і завершення в момент виїзду."""
+    """Застосовує переходи статусів у часі (FR-10, FR-11).
+
+    Запит після строку рішення переходить у REJECTED, а підтверджене бронювання в момент виїзду —
+    у COMPLETED. Викликач має тримати `LOCK`.
+
+    Args:
+        current: Момент, на який оновлюється стан.
+    """
     for booking in repository.all_bookings():
         if booking["status"] == "PENDING" and current >= booking["_decisionDeadline"]:
             booking["status"] = "REJECTED"
@@ -112,7 +175,19 @@ def _fresh_state() -> Iterator[datetime]:
 
 
 def conflicts(listing_id: str, check_in: date, check_out: date, turnover_nights: int) -> list[str]:
-    """Бронювання житла в CONFIRMED чи COMPLETED, що перетинаються з діапазоном (FR-08, умова 2)."""
+    """Шукає бронювання, через які діапазон недоступний (FR-08, умова 2).
+
+    Враховуються лише бронювання в статусах CONFIRMED і COMPLETED.
+
+    Args:
+        listing_id: Ідентифікатор житла.
+        check_in: Дата заїзду.
+        check_out: Дата виїзду.
+        turnover_nights: Перерва N перевірюваного діапазону.
+
+    Returns:
+        Ідентифікатори бронювань, що конфліктують із діапазоном.
+    """
     return [
         booking["id"]
         for booking in repository.bookings_of_listing(listing_id)
@@ -122,7 +197,18 @@ def conflicts(listing_id: str, check_in: date, check_out: date, turnover_nights:
 
 
 def is_available(listing: dict, check_in: date, check_out: date) -> bool:
-    """Повна перевірка доступності для пошуку (FR-05) з перервою, чинною на момент пошуку."""
+    """Виконує повну перевірку доступності для пошуку (FR-05).
+
+    Перерву беруть чинну на момент пошуку. Закритих ночей немає (lab5-scope.md, п. 2).
+
+    Args:
+        listing: Запис житла.
+        check_in: Дата заїзду.
+        check_out: Дата виїзду.
+
+    Returns:
+        True, якщо житло доступне на весь діапазон.
+    """
     with _fresh_state():
         return not conflicts(listing["id"], check_in, check_out, listing["turnoverNights"])
 
@@ -168,7 +254,23 @@ def _check_can_request(
 
 
 def create(user: dict, listing_id: str, check_in: date, check_out: date, guests_count: int) -> dict:
-    """FR-06: запит у PENDING із зафіксованими умовами житла й сумами FR-15."""
+    """Створює запит у PENDING із зафіксованими умовами житла (FR-06, FR-15).
+
+    Args:
+        user: Гість.
+        listing_id: Ідентифікатор житла.
+        check_in: Дата заїзду.
+        check_out: Дата виїзду.
+        guests_count: Кількість осіб.
+
+    Returns:
+        Збережений запис бронювання.
+
+    Raises:
+        ProblemError: NOT_FOUND, якщо житла немає, або перший код відмови FR-07: MIN_NIGHTS,
+            OWN_LISTING, GUESTS_OUT_OF_RANGE, LISTING_UNPUBLISHED, CHECKIN_TOO_SOON,
+            DATES_UNAVAILABLE.
+    """
     listing = repository.get_listing(listing_id)
     if listing is None:
         raise ProblemError("NOT_FOUND", "Житла не існує.")
@@ -225,12 +327,32 @@ def _visible(booking_id: str, user: dict) -> dict:
 
 
 def get(booking_id: str, user: dict) -> dict:
+    """Повертає бронювання гостю або власнику житла (getBooking, FR-12).
+
+    Args:
+        booking_id: Ідентифікатор бронювання.
+        user: Користувач, що запитує бронювання.
+
+    Returns:
+        Запис бронювання.
+
+    Raises:
+        ProblemError: NOT_FOUND для відсутнього або чужого бронювання.
+    """
     with _fresh_state():
         return _visible(booking_id, user)
 
 
 def list_for(user: dict, role: str) -> list[dict]:
-    """FR-12: role=guest — власні поїздки; role=owner — запити й бронювання власного житла."""
+    """Відбирає бронювання користувача за роллю (listBookings, FR-12).
+
+    Args:
+        user: Користувач.
+        role: guest — власні поїздки, owner — запити й бронювання власного житла.
+
+    Returns:
+        Записи бронювань.
+    """
     key = "_guestId" if role == "guest" else "_hostId"
     with _fresh_state():
         return [booking for booking in repository.all_bookings() if booking[key] == user["userId"]]
@@ -248,7 +370,19 @@ def _pending_of_host(booking_id: str, user: dict) -> dict:
 
 
 def confirm(booking_id: str, user: dict) -> dict:
-    """FR-09: підтвердження з автоматичним відхиленням несумісних запитів у PENDING."""
+    """Підтверджує запит і відхиляє несумісні запити в PENDING (FR-09, NFR-01).
+
+    Args:
+        booking_id: Ідентифікатор бронювання.
+        user: Власник житла.
+
+    Returns:
+        Запис у статусі CONFIRMED.
+
+    Raises:
+        ProblemError: NOT_FOUND, якщо бронювання немає, FORBIDDEN для не власника,
+            STATE_CONFLICT, якщо бронювання вже не в PENDING.
+    """
     with _fresh_state():
         booking = _pending_of_host(booking_id, user)
         booking["status"] = "CONFIRMED"
@@ -264,7 +398,19 @@ def confirm(booking_id: str, user: dict) -> dict:
 
 
 def reject(booking_id: str, user: dict) -> dict:
-    """FR-09: відхилення власником."""
+    """Відхиляє запит власником (FR-09).
+
+    Args:
+        booking_id: Ідентифікатор бронювання.
+        user: Власник житла.
+
+    Returns:
+        Запис у статусі REJECTED.
+
+    Raises:
+        ProblemError: NOT_FOUND, якщо бронювання немає, FORBIDDEN для не власника,
+            STATE_CONFLICT, якщо бронювання вже не в PENDING.
+    """
     with _fresh_state():
         booking = _pending_of_host(booking_id, user)
         booking["status"] = "REJECTED"
@@ -272,7 +418,22 @@ def reject(booking_id: str, user: dict) -> dict:
 
 
 def cancel(booking_id: str, user: dict) -> dict:
-    """FR-13: скасування гостем (PENDING, CONFIRMED) або власником (CONFIRMED) до моменту заїзду."""
+    """Скасовує бронювання до моменту заїзду (FR-13).
+
+    Гість скасовує запит у PENDING або бронювання в CONFIRMED, власник — лише в CONFIRMED.
+    Частка повернення зберігається у службовому полі й в API не виходить (lab5-scope.md, п. 6).
+
+    Args:
+        booking_id: Ідентифікатор бронювання.
+        user: Гість цього бронювання або власник житла.
+
+    Returns:
+        Запис у статусі CANCELLED.
+
+    Raises:
+        ProblemError: NOT_FOUND для відсутнього або чужого бронювання, STATE_CONFLICT, якщо статус
+            не дозволяє скасування або момент заїзду настав.
+    """
     with _fresh_state() as current:
         booking = _visible(booking_id, user)
         cancelled_by = "GUEST" if user["userId"] == booking["_guestId"] else "HOST"
@@ -296,7 +457,11 @@ def cancel(booking_id: str, user: dict) -> dict:
 
 
 def reject_pending_for_listing(listing_id: str) -> None:
-    """FR-04: при знятті житла з публікації запити в PENDING переходять у REJECTED."""
+    """Відхиляє запити в PENDING на житло, зняте з публікації (FR-04).
+
+    Args:
+        listing_id: Ідентифікатор житла.
+    """
     with _fresh_state():
         for booking in repository.bookings_of_listing(listing_id):
             if booking["status"] == "PENDING":
@@ -304,5 +469,12 @@ def reject_pending_for_listing(listing_id: str) -> None:
 
 
 def to_api(booking: dict) -> dict:
-    """Представлення за схемою Booking."""
+    """Готує запис до відповіді за схемою Booking.
+
+    Args:
+        booking: Запис сховища.
+
+    Returns:
+        Новий словник без службових полів із префіксом `_`.
+    """
     return {key: value for key, value in booking.items() if not key.startswith("_")}
