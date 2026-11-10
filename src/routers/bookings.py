@@ -1,4 +1,5 @@
 """HTTP-маршрути операцій Bookings (api/openapi.yaml, тег Bookings)."""
+
 from fastapi import APIRouter
 
 from src.auth import NonModerator, User
@@ -10,7 +11,9 @@ router = APIRouter()
 
 @router.post("/bookings", status_code=201)
 def create_booking(user: NonModerator, body: BookingRequest):
-    booking = service.create(user, str(body.listingId), body.checkIn, body.checkOut, body.guestsCount)
+    booking = service.create(
+        user, str(body.listingId), body.checkIn, body.checkOut, body.guestsCount
+    )
     return service.to_api(booking)
 
 

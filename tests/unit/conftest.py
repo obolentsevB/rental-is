@@ -2,9 +2,10 @@
 
 Точки, що спираються на реалізацію:
 - `src.auth.TOKENS` — сховище токенів (п. 11);
-- `src.bookings.now` — годинник сервісного шару, ін'єкція якого передбачена п. 10.
+- `src.services.bookings.now` — годинник сервісного шару, ін'єкція якого передбачена п. 10.
 Час — Europe/Kyiv, як у spec/bdd/booking.feature.
 """
+
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -16,7 +17,8 @@ from src.main import app
 
 KYIV = ZoneInfo("Europe/Kyiv")
 PNG_1X1 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+    "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
 
 
@@ -35,8 +37,9 @@ class Clock:
 
 @pytest.fixture
 def clock(monkeypatch):
-    """Керований годинник; за замовчуванням — «2027-06-01 10:00», як у передумовах booking.feature."""
-    from src import bookings
+    """Керований годинник; за замовчуванням — «2027-06-01 10:00», як у передумовах
+    booking.feature."""
+    from src.services import bookings
 
     state = Clock("2027-06-01 10:00")
     monkeypatch.setattr(bookings, "now", lambda: state.current)
@@ -99,7 +102,12 @@ def make_listing(client, host):
 
 
 def request_booking(client, headers, listing_id, check_in, check_out, guests_count=2):
-    body = {"listingId": listing_id, "checkIn": check_in, "checkOut": check_out, "guestsCount": guests_count}
+    body = {
+        "listingId": listing_id,
+        "checkIn": check_in,
+        "checkOut": check_out,
+        "guestsCount": guests_count,
+    }
     return client.post("/bookings", json=body, headers=headers)
 
 

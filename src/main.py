@@ -1,4 +1,5 @@
 """Збирає застосунок rental-is. Обсяг і обмеження — logs/lab5-scope.md."""
+
 from fastapi import FastAPI
 
 from src.errors import register_error_handlers

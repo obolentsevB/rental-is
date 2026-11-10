@@ -1,4 +1,5 @@
 """Схеми запитів і спільні обмеження полів за api/openapi.yaml."""
+
 import uuid
 from datetime import date
 from decimal import Decimal

@@ -5,6 +5,7 @@
 виходить (п. 6). FR-10 і FR-11 застосовуються ліниво перед кожною дією за
 годинником `now`, який модульні тести підміняють (п. 10).
 """
+
 import threading
 import uuid
 from collections.abc import Iterator
@@ -44,16 +45,20 @@ def _iso(value: datetime) -> str:
     return value.isoformat(timespec="seconds")
 
 
-def costs(nights: int, price_per_night: Decimal, rate: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+def costs(
+    nights: int, price_per_night: Decimal, commission_rate: Decimal
+) -> tuple[Decimal, Decimal, Decimal]:
     """FR-15: вартість проживання, комісія (вниз до 0,01), передоплата."""
-    accommodation = nights * price_per_night
-    commission = (accommodation * rate / 100).quantize(CENT, rounding=ROUND_FLOOR)
-    return accommodation, commission, accommodation + commission
+    accommodation_cost = nights * price_per_night
+    commission = (accommodation_cost * commission_rate / 100).quantize(CENT, rounding=ROUND_FLOOR)
+    return accommodation_cost, commission, accommodation_cost + commission
 
 
-def refund_share(initiator: str, previous_status: str, cancelled_at: datetime, check_in_at: datetime) -> int:
+def refund_share(
+    cancelled_by: str, previous_status: str, cancelled_at: datetime, check_in_at: datetime
+) -> int:
     """FR-13: частка повернення p, %, за ініціатором і попереднім статусом."""
-    if initiator != "GUEST" or previous_status == "PENDING":
+    if cancelled_by != "GUEST" or previous_status == "PENDING":
         return 100
     hours_left = check_in_at - cancelled_at
     if hours_left >= timedelta(hours=168):
@@ -63,25 +68,25 @@ def refund_share(initiator: str, previous_status: str, cancelled_at: datetime, c
     return 0
 
 
-def refund_amount(share: int, accommodation: Decimal, commission: Decimal) -> Decimal:
+def refund(refund_rate: int, accommodation_cost: Decimal, commission: Decimal) -> Decimal:
     """FR-15: повернення = p × вартість + p × комісія, кожен доданок угору до 0,01."""
-    def part(amount: Decimal) -> Decimal:
-        return (amount * share / 100).quantize(CENT, rounding=ROUND_CEILING)
 
-    return part(accommodation) + part(commission)
+    def part(amount: Decimal) -> Decimal:
+        return (amount * refund_rate / 100).quantize(CENT, rounding=ROUND_CEILING)
+
+    return part(accommodation_cost) + part(commission)
 
 
 def _stay(booking: dict) -> tuple[date, date]:
     return date.fromisoformat(booking["checkIn"]), date.fromisoformat(booking["checkOut"])
 
 
-def overlaps(check_in: date, check_out: date, turnover: int, other: dict) -> bool:
-    """Умова (2) FR-08 з перервою запиту `turnover` і перервою, зафіксованою в `other`."""
+def overlaps(check_in: date, check_out: date, turnover_nights: int, other: dict) -> bool:
+    """Умова (2) FR-08 з перервою запиту `turnover_nights` і перервою, зафіксованою в `other`."""
     other_in, other_out = _stay(other)
-    return (
-        check_in < other_out + timedelta(days=other["turnoverNights"])
-        and other_in < check_out + timedelta(days=turnover)
-    )
+    return check_in < other_out + timedelta(
+        days=other["turnoverNights"]
+    ) and other_in < check_out + timedelta(days=turnover_nights)
 
 
 # --- Стан у часі (FR-10, FR-11) -------------------------------------------------
@@ -106,13 +111,13 @@ def _fresh_state() -> Iterator[datetime]:
         yield current
 
 
-def conflicts(listing_id: str, check_in: date, check_out: date, turnover: int) -> list[str]:
-    """Бронювання житла в CONFIRMED або COMPLETED, з якими перетинається діапазон (FR-08, умова 2)."""
+def conflicts(listing_id: str, check_in: date, check_out: date, turnover_nights: int) -> list[str]:
+    """Бронювання житла в CONFIRMED чи COMPLETED, що перетинаються з діапазоном (FR-08, умова 2)."""
     return [
         booking["id"]
         for booking in repository.bookings_of_listing(listing_id)
         if booking["status"] in ("CONFIRMED", "COMPLETED")
-        and overlaps(check_in, check_out, turnover, booking)
+        and overlaps(check_in, check_out, turnover_nights, booking)
     ]
 
 
@@ -128,21 +133,31 @@ def is_available(listing: dict, check_in: date, check_out: date) -> bool:
 def _check_can_request(
     user: dict, listing: dict, check_in: date, check_out: date, guests_count: int, current: datetime
 ) -> None:
-    """Перевірки FR-07 у порядку SRS: повертається перший код; ACCOUNT_BLOCKED (№0) не моделюється."""
+    """Перевірки FR-07 у порядку SRS: повертається перший код.
+
+    ACCOUNT_BLOCKED (№0) не моделюється.
+    """
     nights = (check_out - check_in).days
     if nights < 1:
-        raise ProblemError("MIN_NIGHTS", f"Діапазон [{check_in}, {check_out}) містить {max(nights, 0)} ночей.")
-    if user["userId"] == listing["ownerId"]:
+        raise ProblemError(
+            "MIN_NIGHTS", f"Діапазон [{check_in}, {check_out}) містить {max(nights, 0)} ночей."
+        )
+    if user["userId"] == listing["hostId"]:
         raise ProblemError("OWN_LISTING", "Не можна бронювати житло, власником якого ви є.")
     if not 1 <= guests_count <= listing["maxGuests"]:
         raise ProblemError(
-            "GUESTS_OUT_OF_RANGE", f"Кількість осіб {guests_count} поза межами 1–{listing['maxGuests']}."
+            "GUESTS_OUT_OF_RANGE",
+            f"Кількість осіб {guests_count} поза межами 1–{listing['maxGuests']}.",
         )
     if listing["status"] == "UNPUBLISHED":
-        raise ProblemError("LISTING_UNPUBLISHED", "Житло в стані Unpublished не приймає нових запитів.")
+        raise ProblemError(
+            "LISTING_UNPUBLISHED", "Житло в стані Unpublished не приймає нових запитів."
+        )
     check_in_at = moment(check_in, listing["checkInTime"])
     if check_in_at - current < MIN_TIME_BEFORE_CHECKIN:
-        raise ProblemError("CHECKIN_TOO_SOON", f"До моменту заїзду {_iso(check_in_at)} лишається менше 1 години.")
+        raise ProblemError(
+            "CHECKIN_TOO_SOON", f"До моменту заїзду {_iso(check_in_at)} лишається менше 1 години."
+        )
     conflicting = conflicts(listing["id"], check_in, check_out, listing["turnoverNights"])
     if conflicting:
         raise ProblemError(
@@ -161,38 +176,44 @@ def create(user: dict, listing_id: str, check_in: date, check_out: date, guests_
         _check_can_request(user, listing, check_in, check_out, guests_count, current)
 
         nights = (check_out - check_in).days
-        accommodation, commission, prepayment = costs(nights, Decimal(listing["pricePerNight"]), COMMISSION_RATE)
+        accommodation_cost, commission, prepayment = costs(
+            nights, Decimal(listing["pricePerNight"]), COMMISSION_RATE
+        )
         check_in_at = moment(check_in, listing["checkInTime"])
         check_out_at = moment(check_out, listing["checkOutTime"])
         decision_deadline = min(current + DECISION_PERIOD, check_in_at)
-        return repository.save_booking({
-            "id": str(uuid.uuid4()),
-            "listingId": listing["id"],
-            "checkIn": check_in.isoformat(),
-            "checkOut": check_out.isoformat(),
-            "guestsCount": guests_count,
-            "status": "PENDING",
-            "checkInTime": listing["checkInTime"],
-            "checkOutTime": listing["checkOutTime"],
-            "turnoverNights": listing["turnoverNights"],
-            "commissionRate": int(COMMISSION_RATE) if COMMISSION_RATE == COMMISSION_RATE.to_integral() else float(COMMISSION_RATE),
-            "accommodationCost": str(accommodation),
-            "commission": str(commission),
-            "prepayment": str(prepayment),
-            "checkInAt": _iso(check_in_at),
-            "checkOutAt": _iso(check_out_at),
-            "decisionDeadline": _iso(decision_deadline),
-            "cancelledBy": None,
-            "cancelledAt": None,
-            "reviewDeadline": None,
-            # Службові поля (з префіксом _) у відповідь API не потрапляють.
-            "_guestId": user["userId"],
-            "_hostId": listing["ownerId"],
-            "_checkInAt": check_in_at,
-            "_checkOutAt": check_out_at,
-            "_decisionDeadline": decision_deadline,
-            "_refundShare": None,
-        })
+        return repository.save_booking(
+            {
+                "id": str(uuid.uuid4()),
+                "listingId": listing["id"],
+                "checkIn": check_in.isoformat(),
+                "checkOut": check_out.isoformat(),
+                "guestsCount": guests_count,
+                "status": "PENDING",
+                "checkInTime": listing["checkInTime"],
+                "checkOutTime": listing["checkOutTime"],
+                "turnoverNights": listing["turnoverNights"],
+                "commissionRate": int(COMMISSION_RATE)
+                if COMMISSION_RATE == COMMISSION_RATE.to_integral()
+                else float(COMMISSION_RATE),
+                "accommodationCost": str(accommodation_cost),
+                "commission": str(commission),
+                "prepayment": str(prepayment),
+                "checkInAt": _iso(check_in_at),
+                "checkOutAt": _iso(check_out_at),
+                "decisionDeadline": _iso(decision_deadline),
+                "cancelledBy": None,
+                "cancelledAt": None,
+                "reviewDeadline": None,
+                # Службові поля (з префіксом _) у відповідь API не потрапляють.
+                "_guestId": user["userId"],
+                "_hostId": listing["hostId"],
+                "_checkInAt": check_in_at,
+                "_checkOutAt": check_out_at,
+                "_decisionDeadline": decision_deadline,
+                "_refundShare": None,
+            }
+        )
 
 
 def _visible(booking_id: str, user: dict) -> dict:
@@ -215,7 +236,7 @@ def list_for(user: dict, role: str) -> list[dict]:
         return [booking for booking in repository.all_bookings() if booking[key] == user["userId"]]
 
 
-def _owned_pending(booking_id: str, user: dict) -> dict:
+def _pending_of_host(booking_id: str, user: dict) -> dict:
     booking = repository.get_booking(booking_id)
     if booking is None:
         raise not_found()
@@ -229,7 +250,7 @@ def _owned_pending(booking_id: str, user: dict) -> dict:
 def confirm(booking_id: str, user: dict) -> dict:
     """FR-09: підтвердження з автоматичним відхиленням несумісних запитів у PENDING."""
     with _fresh_state():
-        booking = _owned_pending(booking_id, user)
+        booking = _pending_of_host(booking_id, user)
         booking["status"] = "CONFIRMED"
         check_in, check_out = _stay(booking)
         for other in repository.bookings_of_listing(booking["listingId"]):
@@ -245,7 +266,7 @@ def confirm(booking_id: str, user: dict) -> dict:
 def reject(booking_id: str, user: dict) -> dict:
     """FR-09: відхилення власником."""
     with _fresh_state():
-        booking = _owned_pending(booking_id, user)
+        booking = _pending_of_host(booking_id, user)
         booking["status"] = "REJECTED"
         return booking
 
@@ -254,15 +275,22 @@ def cancel(booking_id: str, user: dict) -> dict:
     """FR-13: скасування гостем (PENDING, CONFIRMED) або власником (CONFIRMED) до моменту заїзду."""
     with _fresh_state() as current:
         booking = _visible(booking_id, user)
-        initiator = "GUEST" if user["userId"] == booking["_guestId"] else "HOST"
-        allowed = ("PENDING", "CONFIRMED") if initiator == "GUEST" else ("CONFIRMED",)
+        cancelled_by = "GUEST" if user["userId"] == booking["_guestId"] else "HOST"
+        allowed = ("PENDING", "CONFIRMED") if cancelled_by == "GUEST" else ("CONFIRMED",)
         if booking["status"] not in allowed:
-            raise ProblemError("STATE_CONFLICT", f"Бронювання в статусі {booking['status']} скасувати неможливо.")
+            raise ProblemError(
+                "STATE_CONFLICT", f"Бронювання в статусі {booking['status']} скасувати неможливо."
+            )
         if current >= booking["_checkInAt"]:
-            raise ProblemError("STATE_CONFLICT", f"Момент заїзду {booking['checkInAt']} настав, скасування неможливе.")
-        booking["_refundShare"] = refund_share(initiator, booking["status"], current, booking["_checkInAt"])
+            raise ProblemError(
+                "STATE_CONFLICT",
+                f"Момент заїзду {booking['checkInAt']} настав, скасування неможливе.",
+            )
+        booking["_refundShare"] = refund_share(
+            cancelled_by, booking["status"], current, booking["_checkInAt"]
+        )
         booking["status"] = "CANCELLED"
-        booking["cancelledBy"] = initiator
+        booking["cancelledBy"] = cancelled_by
         booking["cancelledAt"] = _iso(current)
         return booking
 

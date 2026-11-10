@@ -1,4 +1,5 @@
 """Сервісний шар житла (FR-02, FR-04, FR-05)."""
+
 import base64
 import binascii
 import uuid
@@ -22,20 +23,26 @@ JPEG_SIGNATURE = b"\xff\xd8\xff"
 def _check_new_photo(number: int, photo: NewPhoto) -> None:
     try:
         raw = base64.b64decode(photo.data, validate=True)
-    except (binascii.Error, ValueError):
-        raise ProblemError("PHOTO_INVALID", f"Фотографія {number} не є коректним base64.")
+    except (binascii.Error, ValueError) as err:
+        raise ProblemError("PHOTO_INVALID", f"Фотографія {number} не є коректним base64.") from err
     if not raw.startswith((PNG_SIGNATURE, JPEG_SIGNATURE)):
         raise ProblemError("PHOTO_INVALID", f"Фотографія {number} не у форматі JPEG чи PNG.")
     if len(raw) > MAX_PHOTO_BYTES:
         raise ProblemError(
-            "PHOTO_INVALID", f"Фотографія {number} має розмір {len(raw)} байт, більше за {MAX_PHOTO_BYTES}."
+            "PHOTO_INVALID",
+            f"Фотографія {number} має розмір {len(raw)} байт, більше за {MAX_PHOTO_BYTES}.",
         )
 
 
 def _resolve_photos(photos: list, base_url: str, current: list[dict] | None = None) -> list[dict]:
-    """Перевіряє вимоги FR-02 до фотографій і повертає записи Photo; при порушенні — PHOTO_INVALID."""
+    """Перевіряє вимоги FR-02 до фотографій і повертає записи Photo.
+
+    При порушенні — PHOTO_INVALID.
+    """
     if not 1 <= len(photos) <= MAX_PHOTOS:
-        raise ProblemError("PHOTO_INVALID", f"Потрібно від 1 до {MAX_PHOTOS} фотографій, отримано {len(photos)}.")
+        raise ProblemError(
+            "PHOTO_INVALID", f"Потрібно від 1 до {MAX_PHOTOS} фотографій, отримано {len(photos)}."
+        )
     kept = {photo["id"]: photo for photo in current or []}
     resolved = []
     for number, photo in enumerate(photos, start=1):
@@ -64,12 +71,12 @@ def _card_fields(body: ListingRequest, photos: list[dict]) -> dict:
 def _can_see(record: dict, user: dict | None) -> bool:
     if record["status"] == "PUBLISHED":
         return True
-    return user is not None and (user["role"] == "MODERATOR" or user["userId"] == record["ownerId"])
+    return user is not None and (user["role"] == "MODERATOR" or user["userId"] == record["hostId"])
 
 
 def to_api(record: dict) -> dict:
     """Представлення за схемою Listing (без службових полів сховища)."""
-    return {key: value for key, value in record.items() if key not in ("ownerId", "unpublishedBy")}
+    return {key: value for key, value in record.items() if key not in ("hostId", "unpublishedBy")}
 
 
 def _price(record: dict) -> Decimal:
@@ -116,26 +123,33 @@ def search(
     if sort in ("price_asc", "price_desc"):
         results.sort(key=_price, reverse=sort == "price_desc")
     elif sort == "rating_desc":
-        results.sort(key=lambda record: (record["averageRating"] is None, -(record["averageRating"] or 0)))
+        results.sort(
+            key=lambda record: (record["averageRating"] is None, -(record["averageRating"] or 0))
+        )
     return results
 
 
 def paginate(items: list[dict], limit: int, offset: int) -> tuple[list[dict], int]:
-    """FR-ADD-02: сторінка впорядкованого результату та загальна кількість до застосування limit і offset."""
-    return items[offset:offset + limit], len(items)
+    """FR-ADD-02: сторінка впорядкованого результату та загальна кількість.
+
+    Загальну кількість рахують до застосування limit і offset.
+    """
+    return items[offset : offset + limit], len(items)
 
 
-def create(owner: dict, body: ListingRequest, base_url: str) -> dict:
+def create(host: dict, body: ListingRequest, base_url: str) -> dict:
     """FR-02: нове оголошення одразу в стані Published."""
     photos = _resolve_photos(body.photos, base_url)
-    return repository.save_listing({
-        "id": str(uuid.uuid4()),
-        **_card_fields(body, photos),
-        "status": "PUBLISHED",
-        "averageRating": None,
-        "ownerId": owner["userId"],
-        "unpublishedBy": None,
-    })
+    return repository.save_listing(
+        {
+            "id": str(uuid.uuid4()),
+            **_card_fields(body, photos),
+            "status": "PUBLISHED",
+            "averageRating": None,
+            "hostId": host["userId"],
+            "unpublishedBy": None,
+        }
+    )
 
 
 def get(listing_id: str, user: dict | None) -> dict:
@@ -146,9 +160,12 @@ def get(listing_id: str, user: dict | None) -> dict:
 
 
 def replace(listing_id: str, user: dict, body: ListingRequest, base_url: str) -> dict:
-    """FR-02: повна заміна картки власником; відсутні необов'язкові поля скидаються до значень за замовчуванням."""
+    """FR-02: повна заміна картки власником.
+
+    Відсутні необов'язкові поля скидаються до значень за замовчуванням.
+    """
     record = get(listing_id, user)
-    if record["ownerId"] != user["userId"]:
+    if record["hostId"] != user["userId"]:
         raise ProblemError("FORBIDDEN", "Редагувати можна лише власне оголошення.")
     photos = _resolve_photos(body.photos, base_url, current=record["photos"])
     record.pop("description", None)
@@ -173,7 +190,9 @@ def publish(listing_id: str, moderator: dict) -> dict:
     if record["status"] == "PUBLISHED":
         raise ProblemError("STATE_CONFLICT", "Оголошення вже опубліковане.")
     if record["unpublishedBy"] != "MODERATOR":
-        raise ProblemError("STATE_CONFLICT", "Оголошення, зняте не модератором, повертається лише за оскарженням.")
+        raise ProblemError(
+            "STATE_CONFLICT", "Оголошення, зняте не модератором, повертається лише за оскарженням."
+        )
     record["status"] = "PUBLISHED"
     record["unpublishedBy"] = None
     return record

@@ -4,6 +4,7 @@ Users/Auth не реалізуються: тести засівають схов
 Значення ролі — з `User.roles` (api/openapi.yaml): GUEST, HOST, MODERATOR.
 Залежності виконуються до валідації тіла, тому 401 і 403 мають пріоритет над 422.
 """
+
 from typing import Annotated
 
 from fastapi import Depends

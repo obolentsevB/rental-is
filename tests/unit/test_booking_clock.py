@@ -3,6 +3,7 @@
 Годинник сервісного шару підмінено (фікстура `clock`); дії виконуються через API,
 очікування — зі spec/srs.md і spec/bdd/booking.feature. Час — Europe/Kyiv.
 """
+
 import uuid
 
 from src import repository
@@ -10,18 +11,23 @@ from tests.unit.conftest import assert_problem, book, request_booking
 
 
 def test_checkin_too_soon_boundary(client, clock, guest, other_guest, make_listing):
-    """FR-07; AC-07.2 (до моменту заїзду рівно 1 год — запит створюється; на 1 хв менше — CHECKIN_TOO_SOON)."""
+    """FR-07; AC-07.2 (до моменту заїзду рівно 1 год — запит створюється; на 1 хв менше —
+    CHECKIN_TOO_SOON)."""
     listing = make_listing()
 
     clock.set("2027-06-10 13:00")
-    assert request_booking(client, guest, listing["id"], "2027-06-10", "2027-06-12").status_code == 201
+    assert (
+        request_booking(client, guest, listing["id"], "2027-06-10", "2027-06-12").status_code == 201
+    )
 
     clock.set("2027-06-10 13:01")
     response = request_booking(client, other_guest, listing["id"], "2027-06-10", "2027-06-12")
     assert_problem(response, 422, "CHECKIN_TOO_SOON")
 
 
-def test_checkin_too_soon_precedes_dates_unavailable(client, clock, host, guest, other_guest, make_listing):
+def test_checkin_too_soon_precedes_dates_unavailable(
+    client, clock, host, guest, other_guest, make_listing
+):
     """FR-07 (порядок: CHECKIN_TOO_SOON №5 перевіряється раніше за DATES_UNAVAILABLE №6)."""
     listing = make_listing()
     b = book(client, guest, listing["id"], "2027-06-10", "2027-06-12")
@@ -54,7 +60,8 @@ def test_decision_deadline_is_check_in_when_earlier(client, clock, guest, make_l
 
 
 def test_pending_request_is_rejected_at_decision_deadline(client, clock, host, guest, make_listing):
-    """FR-10; AC-10.1, AC-10.3, AC-09.5 (сценарій «Автоматичне відхилення після спливу строку рішення»).
+    """FR-10; AC-10.1, AC-10.3, AC-09.5 (сценарій «Автоматичне відхилення після спливу строку
+    рішення»).
 
     Операція повернення не перевіряється (lab5-scope.md, п. 5); повідомлення — поза обсягом.
 
@@ -68,23 +75,30 @@ def test_pending_request_is_rejected_at_decision_deadline(client, clock, host, g
 
     clock.set("2027-06-06 14:00")
     assert client.get(f"/bookings/{created['id']}", headers=guest).json()["status"] == "REJECTED"
-    assert_problem(client.post(f"/bookings/{created['id']}/confirm", headers=host), 409, "STATE_CONFLICT")
+    assert_problem(
+        client.post(f"/bookings/{created['id']}/confirm", headers=host), 409, "STATE_CONFLICT"
+    )
 
 
 def test_confirm_one_minute_before_deadline(client, clock, host, guest, make_listing):
-    """FR-09, FR-10; AC-09.7, AC-10.3 (сценарій «Підтвердження за хвилину до спливу строку рішення»)."""
+    """FR-09, FR-10; AC-09.7, AC-10.3 (сценарій «Підтвердження за хвилину до спливу строку
+    рішення»)."""
     clock.set("2027-06-05 14:00")
     created = book(client, guest, make_listing()["id"], "2027-06-10", "2027-06-12")
 
     clock.set("2027-06-06 13:59")
-    assert client.post(f"/bookings/{created['id']}/confirm", headers=host).json()["status"] == "CONFIRMED"
+    assert (
+        client.post(f"/bookings/{created['id']}/confirm", headers=host).json()["status"]
+        == "CONFIRMED"
+    )
 
     clock.set("2027-06-06 14:00")
     assert client.get(f"/bookings/{created['id']}", headers=guest).json()["status"] == "CONFIRMED"
 
 
 def test_turnover_remains_after_completion(client, clock, host, guest, other_guest, make_listing):
-    """FR-08, FR-11; AC-08.5, AC-12.3 (сценарій «Перерва не зникає після переходу бронювання в COMPLETED»).
+    """FR-08, FR-11; AC-08.5, AC-12.3 (сценарій «Перерва не зникає після переходу бронювання в
+    COMPLETED»).
 
     B.N = 1, виїзд 12.06 об 11:00: о 10:59 — CONFIRMED, об 11:00 — COMPLETED з доступним
     відгуком до моменту виїзду + 14 днів; запит на [12.06, 13.06) о 12:00 — DATES_UNAVAILABLE з B.
@@ -109,7 +123,8 @@ def test_turnover_remains_after_completion(client, clock, host, guest, other_gue
 
 
 def test_cancel_at_and_after_check_in_moment_is_refused(client, clock, host, guest, make_listing):
-    """FR-13; AC-13.4 (момент заїзду 14:00: скасування о 14:00 і о 14:01 — відмова і для гостя, і для власника).
+    """FR-13; AC-13.4 (момент заїзду 14:00: скасування о 14:00 і о 14:01 — відмова і для гостя, і
+    для власника).
 
     За хвилину до моменту заїзду скасування ще можливе (межа FR-13).
     """
@@ -123,7 +138,11 @@ def test_cancel_at_and_after_check_in_moment_is_refused(client, clock, host, gue
     for moment in ("2027-06-10 14:00", "2027-06-10 14:01"):
         clock.set(moment)
         for actor in (guest, host):
-            assert_problem(client.post(f"/bookings/{confirmed['id']}/cancel", headers=actor), 409, "STATE_CONFLICT")
+            assert_problem(
+                client.post(f"/bookings/{confirmed['id']}/cancel", headers=actor),
+                409,
+                "STATE_CONFLICT",
+            )
     assert client.get(f"/bookings/{confirmed['id']}", headers=guest).json()["status"] == "CONFIRMED"
 
     clock.set("2027-06-20 13:59")
@@ -155,7 +174,9 @@ def test_search_excludes_listing_with_completed_booking(client, clock, host, gue
     assert client.get(f"/bookings/{b['id']}", headers=guest).json()["status"] == "COMPLETED"
 
     def found(check_in, check_out):
-        response = client.get("/listings", params={"city": city, "checkIn": check_in, "checkOut": check_out})
+        response = client.get(
+            "/listings", params={"city": city, "checkIn": check_in, "checkOut": check_out}
+        )
         assert response.status_code == 200
         return [item["id"] for item in response.json()]
 
@@ -163,7 +184,9 @@ def test_search_excludes_listing_with_completed_booking(client, clock, host, gue
     assert found("2027-06-12", "2027-06-14") == [listing["id"]]
 
 
-def test_refund_scale_uses_check_in_time_fixed_at_creation(client, clock, host, guest, make_listing):
+def test_refund_scale_uses_check_in_time_fixed_at_creation(
+    client, clock, host, guest, make_listing
+):
     """FR-06, FR-13; AC-06.4 (шкала повернення рахується від зафіксованого часу заїзду).
 
     Час заїзду змінено з 14:00 на 16:00. За 71 год 59 хв до зафіксованого моменту p = 0%;
@@ -173,8 +196,16 @@ def test_refund_scale_uses_check_in_time_fixed_at_creation(client, clock, host, 
     listing = make_listing()
     b = book(client, guest, listing["id"], "2027-06-10", "2027-06-12")
     assert client.post(f"/bookings/{b['id']}/confirm", headers=host).status_code == 200
-    card = {key: listing[key] for key in ("title", "city", "address", "maxGuests", "pricePerNight", "checkOutTime")}
-    changed = {**card, "photos": [{"id": listing["photos"][0]["id"]}], "checkInTime": "16:00", "turnoverNights": 0}
+    card = {
+        key: listing[key]
+        for key in ("title", "city", "address", "maxGuests", "pricePerNight", "checkOutTime")
+    }
+    changed = {
+        **card,
+        "photos": [{"id": listing["photos"][0]["id"]}],
+        "checkInTime": "16:00",
+        "turnoverNights": 0,
+    }
     assert client.put(f"/listings/{listing['id']}", json=changed, headers=host).status_code == 200
 
     clock.set("2027-06-07 14:01")

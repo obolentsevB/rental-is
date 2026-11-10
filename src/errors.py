@@ -1,4 +1,5 @@
 """Модель помилок Problem (RFC 9457): єдиний виняток сервісів і обробники застосунку."""
+
 import uuid
 from collections.abc import Sequence
 
@@ -88,7 +89,9 @@ async def handle_http(request: Request, exc: StarletteHTTPException):
         # Тіло, яке не вдається розібрати; статусу 400 у контракті немає — це порушення схеми.
         return problem_response("VALIDATION_FAILED", "Тіло запиту не вдається розібрати як JSON.")
     if exc.status_code == 405:
-        return JSONResponse({"detail": exc.detail}, status_code=405, headers={"Allow": allowed_methods(request)})
+        return JSONResponse(
+            {"detail": exc.detail}, status_code=405, headers={"Allow": allowed_methods(request)}
+        )
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 

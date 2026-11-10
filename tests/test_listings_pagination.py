@@ -3,6 +3,7 @@
 Контракт: api/openapi.yaml, тег api-v1.1. Спільні умови AC-ADD-02.x відтворює фікстура
 `catalog`. Замість міста «Пагінація» — унікальне місто, бо сховище спільне для всіх тестів.
 """
+
 import pytest
 
 from tests.test_listings import (  # noqa: F401 (auth, client, host — фікстури pytest)
@@ -86,10 +87,13 @@ def test_offset_skips_first_items(client, catalog):
 
 
 def test_total_count_does_not_depend_on_limit_and_offset(client, catalog):
-    """AC-ADD-02.3: `X-Total-Count` не залежить від `limit` і `offset`; за межами результату — порожній масив."""
+    """AC-ADD-02.3: `X-Total-Count` не залежить від `limit` і `offset`; за межами результату —
+    порожній масив."""
     variants = ({"limit": 10}, {"limit": 5, "offset": 20}, {"offset": 30}, {})
 
-    responses = [client.get("/listings", params={"city": catalog, **variant}) for variant in variants]
+    responses = [
+        client.get("/listings", params={"city": catalog, **variant}) for variant in variants
+    ]
 
     assert [response.status_code for response in responses] == [200] * len(variants)
     assert [total_count(response) for response in responses] == [str(TOTAL)] * len(variants)

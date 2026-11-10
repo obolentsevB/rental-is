@@ -1,4 +1,5 @@
 """HTTP-маршрути операцій Listings (api/openapi.yaml, тег Listings)."""
+
 from datetime import date
 from typing import Annotated
 
